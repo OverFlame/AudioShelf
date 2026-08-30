@@ -1,0 +1,78 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart'
+    show sqfliteFfiInit, databaseFactoryFfi;
+
+import '../services/data_dir_service.dart';
+import '../utils/log_util.dart';
+import 'tables.dart';
+
+/// 数据库管理器 — 初始化、打开、迁移、单例
+///
+/// Windows / Linux 使用 sqflite_common_ffi；Android / iOS 使用 sqflite 插件。
+class DatabaseManager {
+  static DatabaseManager? _instance;
+  static Database? _db;
+
+  DatabaseManager._();
+
+  static DatabaseManager get instance {
+    _instance ??= DatabaseManager._();
+    return _instance!;
+  }
+
+  Database get db {
+    if (_db == null) {
+      throw StateError('Database not initialized. Call init() first.');
+    }
+    return _db!;
+  }
+
+  Future<void> init() async {
+    logInfo('Database', 'Initializing...');
+    if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+
+    final dir = await DataDirService.instance.dataDir;
+    final dbPath = p.join(dir, 'audioshelf.db');
+    logInfo('Database', 'DB path: $dbPath');
+
+    _db = await openDatabase(
+      dbPath,
+      version: Tables.version,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys=ON');
+      },
+      onCreate: (db, version) async {
+        logInfo('Database', 'Creating tables (v$version)');
+        for (final sql in Tables.createStatements) {
+          await db.execute(sql);
+        }
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        logInfo('Database', 'Migrating v$oldVersion -> v$newVersion');
+        for (int v = oldVersion + 1; v <= newVersion; v++) {
+          final migrations = Tables.migrations[v];
+          if (migrations == null) continue;
+          for (final sql in migrations) {
+            await db.execute(sql);
+          }
+        }
+      },
+    );
+
+    await _db!.execute('PRAGMA journal_mode=WAL');
+    logInfo('Database', 'Initialized OK (WAL+FK enabled)');
+  }
+
+  Future<void> close() async {
+    logInfo('Database', 'Closing connection');
+    await _db?.close();
+    _db = null;
+  }
+}
