@@ -12,10 +12,10 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
 echo "==> flutter pub get"
-flutter pub get
+flutter --no-version-check --suppress-analytics pub get
 
 echo "==> flutter build apk --release"
-flutter build apk --release
+flutter --no-version-check --suppress-analytics build apk --release
 
 echo ""
 echo "✅ 构建完成：build/app/outputs/flutter-apk/app-release.apk"

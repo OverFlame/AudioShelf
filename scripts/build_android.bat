@@ -15,11 +15,11 @@ if "%ANDROID_HOME%"=="" set "ANDROID_HOME=D:\Android\sdk"
 set "ANDROID_SDK_ROOT=%ANDROID_HOME%"
 
 echo ==^> flutter pub get
-call flutter pub get
+call flutter --no-version-check --suppress-analytics pub get
 if errorlevel 1 goto :err
 
 echo ==^> flutter build apk --release
-call flutter build apk --release
+call flutter --no-version-check --suppress-analytics build apk --release
 if errorlevel 1 goto :err
 
 echo.
