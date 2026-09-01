@@ -21,13 +21,14 @@ class WorksGrid extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.album_outlined, size: 56, color: AppColors.muted),
+            Icon(Icons.album_outlined, size: 56, color: AppColors.mutedOf(context)),
             const SizedBox(height: 12),
-            const Text('还没有作品',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+            Text('还没有作品',
+                style: TextStyle(
+                    color: AppColors.textSecondaryOf(context), fontSize: 14)),
             const SizedBox(height: 4),
             Text('在左侧点击「添加文件夹」导入音频，自动生成作品',
-                style: TextStyle(color: AppColors.muted, fontSize: 12)),
+                style: TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
           ],
         ),
       );
@@ -88,8 +89,8 @@ class _WorkCard extends StatelessWidget {
             work.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-                color: AppColors.textPrimary,
+            style: TextStyle(
+                color: AppColors.textPrimaryOf(context),
                 fontSize: 14,
                 fontWeight: FontWeight.w600),
           ),

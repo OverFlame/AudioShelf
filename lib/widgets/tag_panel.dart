@@ -7,7 +7,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'dialogs.dart';
 
-/// 左侧面板：导入 + 作品集 + 标签筛选
+/// 左侧面板：导入 + 作品集 + 标签（对标 PictureViewer 的标签面板）
 class TagPanel extends StatefulWidget {
   const TagPanel({super.key});
 
@@ -17,10 +17,13 @@ class TagPanel extends StatefulWidget {
 
 class _TagPanelState extends State<TagPanel> {
   final _pathController = TextEditingController();
+  final _tagSearchCtrl = TextEditingController();
+  String _tagSearch = '';
 
   @override
   void dispose() {
     _pathController.dispose();
+    _tagSearchCtrl.dispose();
     super.dispose();
   }
 
@@ -55,13 +58,14 @@ class _TagPanelState extends State<TagPanel> {
                     enabled: !appState.importing,
                     onSubmitted: (_) => _addFromPath(appState),
                     style: const TextStyle(fontSize: 12),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: '输入文件夹路径，回车添加',
-                      hintStyle:
-                          TextStyle(fontSize: 11, color: AppColors.mutedLight),
+                      hintStyle: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.mutedLightOf(context)),
                       isDense: true,
                       contentPadding:
-                          EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                     ),
                   ),
                 ),
@@ -76,7 +80,7 @@ class _TagPanelState extends State<TagPanel> {
                   tooltip: '从路径添加',
                   style: IconButton.styleFrom(
                     foregroundColor: AppColors.accent,
-                    backgroundColor: AppColors.surface,
+                    backgroundColor: AppColors.surfaceOf(context),
                   ),
                 ),
               ),
@@ -89,7 +93,9 @@ class _TagPanelState extends State<TagPanel> {
               onPressed:
                   appState.importing ? null : () => _pickFolder(appState),
               icon: Icon(
-                appState.importing ? Icons.hourglass_empty : Icons.create_new_folder,
+                appState.importing
+                    ? Icons.hourglass_empty
+                    : Icons.create_new_folder,
                 size: 14,
               ),
               label: Text(
@@ -107,7 +113,7 @@ class _TagPanelState extends State<TagPanel> {
               padding: const EdgeInsets.only(top: 6),
               child: LinearProgressIndicator(
                 value: appState.importProgress,
-                backgroundColor: AppColors.surface,
+                backgroundColor: AppColors.surfaceOf(context),
                 color: AppColors.accent,
                 minHeight: 2,
               ),
@@ -133,7 +139,6 @@ class _TagPanelState extends State<TagPanel> {
     }
   }
 
-  /// Android 上导入前检查「所有文件访问」授权；未授权则跳转系统设置并提示
   Future<bool> _ensureAllFilesAccess() async {
     final bridge = MediaBridge.instance;
     if (!bridge.isAndroid) return true;
@@ -157,17 +162,17 @@ class _TagPanelState extends State<TagPanel> {
           padding: const EdgeInsets.fromLTRB(12, 8, 8, 2),
           child: Row(
             children: [
-              const Text('作品集',
+              Text('作品集',
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.mutedLight)),
+                      color: AppColors.mutedLightOf(context))),
               const Spacer(),
               IconButton(
                 padding: EdgeInsets.zero,
                 onPressed: () => _createWork(appState),
-                icon: const Icon(Icons.add_circle_outline,
-                    size: 15, color: AppColors.muted),
+                icon: Icon(Icons.add_circle_outline,
+                    size: 15, color: AppColors.mutedOf(context)),
                 tooltip: '新建空作品',
               ),
             ],
@@ -221,13 +226,12 @@ class _TagPanelState extends State<TagPanel> {
     return InkWell(
       onTap: onTap,
       child: Container(
-        color: selected ? AppColors.surface : null,
+        color: selected ? AppColors.surfaceOf(context) : null,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
           children: [
             Icon(icon,
-                size: 15,
-                color: selected ? AppColors.accent : AppColors.blue),
+                size: 15, color: selected ? AppColors.accent : AppColors.blue),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -237,7 +241,9 @@ class _TagPanelState extends State<TagPanel> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                  color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                  color: selected
+                      ? AppColors.textPrimaryOf(context)
+                      : AppColors.textSecondaryOf(context),
                 ),
               ),
             ),
@@ -247,124 +253,441 @@ class _TagPanelState extends State<TagPanel> {
     );
   }
 
-  // ── 标签筛选 ──
+  // ── 标签 ──
   Widget _tagSection(AppState appState) {
-    final tags = appState.allTags;
-    final groups = <String, List<Tag>>{};
-    for (final t in tags) {
-      groups.putIfAbsent(t.namespace, () => []).add(t);
+    final allTags = appState.allTags;
+    final filter = appState.tagFilter;
+    final activeIds = <int>{
+      ...filter.andTagIds,
+      ...filter.orTagIds,
+      ...filter.notTagIds,
+    };
+
+    var filtered = _tagSearch.isEmpty
+        ? allTags
+        : allTags
+            .where((t) =>
+                t.name.toLowerCase().contains(_tagSearch.toLowerCase()) ||
+                t.namespace.toLowerCase().contains(_tagSearch.toLowerCase()))
+            .toList();
+
+    final namespaces = <String, List<Tag>>{};
+    for (final t in filtered) {
+      final ns = t.namespace.isEmpty ? '(无命名空间)' : t.namespace;
+      namespaces.putIfAbsent(ns, () => []).add(t);
     }
+    final sortedNs = namespaces.keys.toList()
+      ..sort((a, b) {
+        if (a == '(无命名空间)') return 1;
+        if (b == '(无命名空间)') return -1;
+        return a.compareTo(b);
+      });
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 4, 2),
-          child: Row(
-            children: [
-              const Text('标签筛选',
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.mutedLight)),
-              const Spacer(),
-              IconButton(
-                padding: EdgeInsets.zero,
-                tooltip: '高级筛选表达式',
-                onPressed: () => _advancedFilter(appState),
-                icon: Icon(Icons.functions,
-                    size: 15,
-                    color: appState.hasAdvancedFilter
-                        ? AppColors.accent
-                        : AppColors.muted),
-              ),
-              IconButton(
-                padding: EdgeInsets.zero,
-                tooltip: '清除筛选',
-                onPressed: () {
-                  appState.clearTagFilters();
-                  appState.clearAdvancedFilter();
-                },
-                icon: const Icon(Icons.clear_all,
-                    size: 15, color: AppColors.muted),
-              ),
-            ],
-          ),
-        ),
+        _tagHeader(appState),
+        const Divider(height: 1),
+        _tagSearchBar(),
+        if (activeIds.isNotEmpty) _activeFilterBar(appState),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.only(bottom: 8),
-            children: [
-              for (final entry in groups.entries) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 8, 2),
-                  child: Text(entry.key,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.namespaceColor(entry.key))),
-                ),
-                for (final t in entry.value) _tagRow(appState, t),
-              ],
-            ],
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            itemCount: sortedNs.length,
+            itemBuilder: (ctx, i) => _namespaceGroup(
+                sortedNs[i], namespaces[sortedNs[i]]!, appState, filter),
           ),
         ),
       ],
     );
   }
 
-  Widget _tagRow(AppState appState, Tag tag) {
-    final id = tag.id;
-    final inAnd = id != null && appState.tagFilter.andTagIds.contains(id);
-    final inOr = id != null && appState.tagFilter.orTagIds.contains(id);
-    final inNot = id != null && appState.tagFilter.notTagIds.contains(id);
+  Widget _tagHeader(AppState appState) {
+    return SizedBox(
+      height: 40,
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Text('标签',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondaryOf(context))),
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: '高级筛选表达式',
+            onPressed: () => _advancedFilter(appState),
+            icon: Icon(Icons.functions,
+                size: 15,
+                color: appState.hasAdvancedFilter
+                    ? AppColors.accent
+                    : AppColors.mutedOf(context)),
+          ),
+          IconButton(
+            tooltip: '新建标签',
+            onPressed: () => _showCreateTagDialog(appState),
+            icon: Icon(Icons.add, size: 16, color: AppColors.mutedOf(context)),
+          ),
+          if (appState.tagFilter.active || appState.hasAdvancedFilter)
+            IconButton(
+              tooltip: '清除筛选',
+              onPressed: () {
+                appState.clearTagFilters();
+                appState.clearAdvancedFilter();
+              },
+              icon: Icon(Icons.clear, size: 14, color: AppColors.mutedOf(context)),
+            ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
 
-    IconData icon;
-    Color color;
-    if (inAnd) {
-      icon = Icons.check_circle;
-      color = AppColors.success;
-    } else if (inOr) {
-      icon = Icons.add_circle;
-      color = AppColors.blue;
-    } else if (inNot) {
-      icon = Icons.cancel;
-      color = AppColors.danger;
-    } else {
-      icon = Icons.circle_outlined;
-      color = AppColors.muted;
+  Widget _tagSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
+      child: SizedBox(
+        height: 32,
+        child: TextField(
+          controller: _tagSearchCtrl,
+          onChanged: (v) => setState(() => _tagSearch = v),
+          style: TextStyle(fontSize: 12, color: AppColors.textPrimaryOf(context)),
+          decoration: InputDecoration(
+            hintText: '搜索标签...',
+            hintStyle: TextStyle(
+                fontSize: 12, color: AppColors.mutedLightOf(context)),
+            prefixIcon: Icon(Icons.search,
+                size: 14, color: AppColors.mutedLightOf(context)),
+            suffixIcon: _tagSearch.isNotEmpty
+                ? IconButton(
+                    icon: Icon(Icons.clear,
+                        size: 14, color: AppColors.mutedLightOf(context)),
+                    onPressed: () {
+                      _tagSearchCtrl.clear();
+                      setState(() => _tagSearch = '');
+                    },
+                  )
+                : null,
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _activeFilterBar(AppState appState) {
+    final filter = appState.tagFilter;
+    final tagMap = {for (final t in appState.allTags) t.id!: t};
+
+    final chips = <Widget>[];
+    for (final id in filter.andTagIds) {
+      final tag = tagMap[id];
+      if (tag == null) continue;
+      chips.add(_filterChip('AND ${tag.name}', AppColors.success,
+          () => appState.toggleAndFilter(id)));
+    }
+    for (final id in filter.orTagIds) {
+      final tag = tagMap[id];
+      if (tag == null) continue;
+      chips.add(_filterChip('OR ${tag.name}', AppColors.warning,
+          () => appState.toggleOrFilter(id)));
+    }
+    for (final id in filter.notTagIds) {
+      final tag = tagMap[id];
+      if (tag == null) continue;
+      chips.add(_filterChip('NOT ${tag.name}', AppColors.danger,
+          () => appState.toggleNotFilter(id)));
     }
 
-    return InkWell(
-      onTap: () {
-        if (id == null) return;
-        if (inAnd) {
-          appState.toggleOrFilter(id);
-        } else if (inOr) {
-          appState.toggleNotFilter(id);
-        } else if (inNot) {
-          appState.clearTagFilters();
-        } else {
-          appState.toggleAndFilter(id);
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Container(
+      color: AppColors.surfaceOf(context),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      child: Wrap(spacing: 4, runSpacing: 2, children: chips),
+    );
+  }
+
+  Widget _filterChip(String label, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 10, color: color)),
+      ),
+    );
+  }
+
+  Widget _namespaceGroup(
+      String ns, List<Tag> tags, AppState appState, TagFilter filter) {
+    tags.sort((a, b) => a.name.compareTo(b.name));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+          child: Text(
+            ns,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: AppColors.mutedLighter,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        ...tags.map((tag) => _tagItem(tag, appState, filter)),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Widget _tagItem(Tag tag, AppState appState, TagFilter filter) {
+    final andActive = filter.andTagIds.contains(tag.id);
+    final orActive = filter.orTagIds.contains(tag.id);
+    final notActive = filter.notTagIds.contains(tag.id);
+    final anyActive = andActive || orActive || notActive;
+    final dotColor = AppColors.parseColor(tag.color);
+
+    return Material(
+      color: anyActive ? AppColors.surfaceAltOf(context) : Colors.transparent,
+      child: InkWell(
+        onTap: () => appState.toggleAndFilter(tag.id!),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                  border: anyActive
+                      ? Border.all(color: dotColor, width: 2)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  tag.name,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: anyActive
+                        ? AppColors.textPrimaryOf(context)
+                        : AppColors.textSecondaryOf(context),
+                    fontWeight:
+                        anyActive ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              _filterPopup(tag, appState),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _filterPopup(Tag tag, AppState appState) {
+    final filter = appState.tagFilter;
+    final andActive = filter.andTagIds.contains(tag.id);
+    final orActive = filter.orTagIds.contains(tag.id);
+    final notActive = filter.notTagIds.contains(tag.id);
+
+    return PopupMenuButton<String>(
+      padding: EdgeInsets.zero,
+      iconSize: 12,
+      icon: Icon(
+        Icons.more_horiz,
+        size: 12,
+        color: (andActive || orActive || notActive)
+            ? AppColors.textPrimaryOf(context)
+            : AppColors.mutedOf(context),
+      ),
+      tooltip: '筛选选项',
+      onSelected: (action) {
+        switch (action) {
+          case 'and':
+            appState.toggleAndFilter(tag.id!);
+            break;
+          case 'or':
+            appState.toggleOrFilter(tag.id!);
+            break;
+          case 'not':
+            appState.toggleNotFilter(tag.id!);
+            break;
+          case 'clear':
+            appState.toggleAndFilter(tag.id!);
+            appState.toggleOrFilter(tag.id!);
+            appState.toggleNotFilter(tag.id!);
+            break;
+          case 'delete':
+            _showDeleteTagDialog(tag, appState);
+            break;
         }
       },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Row(
+      itemBuilder: (ctx) => [
+        PopupMenuItem(
+          value: 'and',
+          child: _popupItem('AND 交集', '必须拥有此标签', Icons.search, andActive),
+        ),
+        PopupMenuItem(
+          value: 'or',
+          child: _popupItem('OR 并集', '可以拥有此标签', Icons.filter_list, orActive),
+        ),
+        PopupMenuItem(
+          value: 'not',
+          child: _popupItem('NOT 排除', '不能拥有此标签', Icons.block, notActive),
+        ),
+        if (andActive || orActive || notActive) const PopupMenuDivider(),
+        if (andActive || orActive || notActive)
+          const PopupMenuItem(
+              value: 'clear', child: Text('清除此标签筛选', style: TextStyle(fontSize: 12))),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('删除标签',
+              style: TextStyle(fontSize: 12, color: AppColors.danger)),
+        ),
+      ],
+    );
+  }
+
+  Widget _popupItem(String title, String sub, IconData icon, bool active) {
+    return Row(
+      children: [
+        Icon(icon,
+            size: 14,
+            color: active ? AppColors.accent : AppColors.mutedOf(context)),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(tag.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: (inAnd || inOr || inNot)
-                          ? AppColors.textPrimary
-                          : AppColors.textSecondary)),
+            Text(title, style: const TextStyle(fontSize: 12)),
+            Text(sub,
+                style: TextStyle(
+                    fontSize: 10, color: AppColors.mutedOf(context))),
+          ],
+        ),
+        if (active)
+          const Padding(
+            padding: EdgeInsets.only(left: 8),
+            child: Icon(Icons.check, size: 12, color: AppColors.accent),
+          ),
+      ],
+    );
+  }
+
+  // ── 新建标签对话框 ──
+  void _showCreateTagDialog(AppState appState) {
+    final nameCtrl = TextEditingController();
+    final nsCtrl = TextEditingController();
+    String color = '#a98cf5';
+    const presetColors = [
+      '#a98cf5', '#f06e7f', '#f0a868', '#e2c275',
+      '#9ccb86', '#63bfc8', '#6fb6ec', '#9fa6ef',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('新建标签'),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                      labelText: '标签名', hintText: '例如：纯音乐'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nsCtrl,
+                  decoration: const InputDecoration(
+                      labelText: '命名空间 (可选)', hintText: '例如：风格'),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: presetColors.map((c) {
+                    final selected = color == c;
+                    return GestureDetector(
+                      onTap: () => setLocal(() => color = c),
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: AppColors.parseColor(c),
+                          shape: BoxShape.circle,
+                          border: selected
+                              ? Border.all(
+                                  color: AppColors.textPrimaryOf(ctx), width: 2)
+                              : null,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消')),
+            TextButton(
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                if (name.isNotEmpty) {
+                  appState.createTag(name,
+                      namespace: nsCtrl.text.trim(), color: color);
+                  Navigator.pop(ctx);
+                }
+              },
+              child: const Text('创建'),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showDeleteTagDialog(Tag tag, AppState appState) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除标签'),
+        content: Text('确定删除「${tag.name}」？关联的曲目/文件夹标签也会被移除。',
+            style: TextStyle(
+                color: AppColors.textSecondaryOf(ctx), fontSize: 13)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () {
+              appState.deleteTag(tag.id!);
+              Navigator.pop(ctx);
+            },
+            child: const Text('删除', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
       ),
     );
   }

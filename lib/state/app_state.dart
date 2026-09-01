@@ -531,9 +531,60 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addTagToFolder(int folderId, Tag tag) async {
-    await _tagDao.addTagToFolder(folderId, tag.id!);
+    await addTagsToFolder(folderId, [tag]);
+  }
+
+  /// 为文件夹批量添加标签；[recursive] 为真时递归同步到其所有子文件夹曲目。
+  Future<void> addTagsToFolder(int folderId, List<Tag> tags,
+      {bool recursive = false}) async {
+    for (final tag in tags) {
+      await _tagDao.addTagToFolder(folderId, tag.id!);
+    }
+    if (recursive) {
+      final trackIds = await _collectFolderTrackIds(folderId);
+      for (final tag in tags) {
+        for (final tid in trackIds) {
+          await _tagDao.addTagToTrack(tid, tag.id!);
+        }
+      }
+    }
     _folderVersion++;
     notifyListeners();
+  }
+
+  Future<void> removeTagsFromFolder(int folderId, List<Tag> tags,
+      {bool recursive = false}) async {
+    if (recursive) {
+      final trackIds = await _collectFolderTrackIds(folderId);
+      for (final tag in tags) {
+        for (final tid in trackIds) {
+          await _tagDao.removeTagFromTrack(tid, tag.id!);
+        }
+      }
+    }
+    for (final tag in tags) {
+      await _tagDao.removeTagFromFolder(folderId, tag.id!);
+    }
+    _folderVersion++;
+    notifyListeners();
+  }
+
+  /// 收集文件夹及其所有子文件夹下的曲目 id（按路径前缀）
+  Future<Set<int>> _collectFolderTrackIds(int folderId) async {
+    final paths = <String>[];
+    final queue = <int>[folderId];
+    while (queue.isNotEmpty) {
+      final fid = queue.removeAt(0);
+      for (final fp in await _folderDao.getPaths(fid)) {
+        paths.add(fp.path);
+      }
+      for (final c in await _folderDao.listChildren(fid)) {
+        if (c.id != null) queue.add(c.id!);
+      }
+    }
+    if (paths.isEmpty) return {};
+    final tracks = await _trackDao.queryByDirs(paths);
+    return tracks.map((t) => t.id).whereType<int>().toSet();
   }
 
   Future<List<Tag>> getFolderTags(int folderId) =>

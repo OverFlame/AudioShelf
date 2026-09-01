@@ -36,7 +36,7 @@ class HomePage extends StatelessWidget {
         children: [
           Container(
             width: 260,
-            color: AppColors.panel,
+            color: AppColors.panelOf(context),
             child: const TagPanel(),
           ),
           const VerticalDivider(width: 1),

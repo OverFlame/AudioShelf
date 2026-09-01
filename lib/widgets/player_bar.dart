@@ -21,23 +21,27 @@ class PlayerBar extends StatelessWidget {
     if (track == null) {
       return Container(
         height: 72,
-        color: AppColors.panel,
+        color: AppColors.panelOf(context),
         child: Center(
           child: Text('未在播放',
-              style: TextStyle(color: AppColors.mutedLight, fontSize: 13)),
+              style:
+                  TextStyle(color: AppColors.mutedLightOf(context), fontSize: 13)),
         ),
       );
     }
 
     final maxMs = player.duration.inMilliseconds;
-    final posMs = player.position.inMilliseconds.clamp(0, maxMs > 0 ? maxMs : 0);
+    final posMs =
+        player.position.inMilliseconds.clamp(0, maxMs > 0 ? maxMs : 0);
     final cover = appState.coverForTrack(track);
 
     return Container(
       height: 84,
-      decoration: const BoxDecoration(
-        color: AppColors.panel,
-        border: Border(top: BorderSide(color: AppColors.surfaceAlt, width: 0.5)),
+      decoration: BoxDecoration(
+        color: AppColors.panelOf(context),
+        border: Border(
+            top: BorderSide(
+                color: AppColors.surfaceAltOf(context), width: 0.5)),
       ),
       child: Column(
         children: [
@@ -54,7 +58,7 @@ class PlayerBar extends StatelessWidget {
                 value: maxMs > 0 ? posMs.toDouble() : 0,
                 max: maxMs > 0 ? maxMs.toDouble() : 1,
                 activeColor: AppColors.accent,
-                inactiveColor: AppColors.surfaceAlt,
+                inactiveColor: AppColors.surfaceAltOf(context),
                 onChanged: (v) => player.seek(Duration(milliseconds: v.round())),
               ),
             ),
@@ -77,7 +81,7 @@ class PlayerBar extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: AppColors.textPrimary,
+                              color: AppColors.textPrimaryOf(context),
                               fontSize: 14,
                               fontWeight: FontWeight.w600),
                         ),
@@ -87,30 +91,39 @@ class PlayerBar extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12),
+                              color: AppColors.textSecondaryOf(context),
+                              fontSize: 12),
                         ),
                       ],
                     ),
                   ),
                   Text(
                     '${formatDuration(player.position)} / ${formatDuration(player.duration)}',
-                    style: TextStyle(color: AppColors.mutedLight, fontSize: 11),
+                    style: TextStyle(
+                        color: AppColors.mutedLightOf(context), fontSize: 11),
                   ),
                   const SizedBox(width: 6),
+                  // 音量
+                  IconButton(
+                    icon: Icon(_volumeIcon(player.volume),
+                        size: 18, color: AppColors.mutedLightOf(context)),
+                    tooltip: '音量',
+                    onPressed: () => _showVolumeDialog(context, player),
+                  ),
                   IconButton(
                     icon: Icon(
                       player.shuffle ? Icons.shuffle : Icons.shuffle_on_outlined,
                       size: 18,
                       color: player.shuffle
                           ? AppColors.accent
-                          : AppColors.mutedLight,
+                          : AppColors.mutedLightOf(context),
                     ),
                     tooltip: '随机播放',
                     onPressed: player.toggleShuffle,
                   ),
                   IconButton(
-                    icon: const Icon(Icons.skip_previous, size: 26,
-                        color: AppColors.textPrimary),
+                    icon: Icon(Icons.skip_previous,
+                        size: 26, color: AppColors.textPrimaryOf(context)),
                     tooltip: '上一首',
                     onPressed: () => player.previous(),
                   ),
@@ -126,8 +139,8 @@ class PlayerBar extends StatelessWidget {
                     onPressed: () => player.togglePlay(),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.skip_next, size: 26,
-                        color: AppColors.textPrimary),
+                    icon: Icon(Icons.skip_next,
+                        size: 26, color: AppColors.textPrimaryOf(context)),
                     tooltip: '下一首',
                     onPressed: () => player.next(),
                   ),
@@ -137,7 +150,7 @@ class PlayerBar extends StatelessWidget {
                       size: 18,
                       color: player.repeatMode != RepeatMode.off
                           ? AppColors.accent
-                          : AppColors.mutedLight,
+                          : AppColors.mutedLightOf(context),
                     ),
                     tooltip: '循环模式',
                     onPressed: () => _cycleRepeat(player),
@@ -155,6 +168,49 @@ class PlayerBar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  IconData _volumeIcon(double v) {
+    if (v <= 0) return Icons.volume_off;
+    if (v < 0.5) return Icons.volume_down;
+    return Icons.volume_up;
+  }
+
+  Future<void> _showVolumeDialog(
+      BuildContext context, PlayerController player) {
+    return showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('音量'),
+          content: SizedBox(
+            width: 240,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.volume_down, size: 18),
+                Expanded(
+                  child: Slider(
+                    value: player.volume,
+                    min: 0,
+                    max: 1,
+                    onChanged: (v) {
+                      setLocal(() {});
+                      player.setVolume(v);
+                    },
+                  ),
+                ),
+                const Icon(Icons.volume_up, size: 18),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+          ],
+        ),
       ),
     );
   }

@@ -31,11 +31,11 @@ class FolderBrowser extends StatelessWidget {
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: AppColors.panel,
+      color: AppColors.panelOf(context),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, size: 18, color: AppColors.mutedLight),
+            icon: Icon(Icons.arrow_back, size: 18, color: AppColors.mutedLightOf(context)),
             tooltip: '返回上一级',
             onPressed: () => appState.goUp(),
           ),
@@ -48,7 +48,7 @@ class FolderBrowser extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
                       child: Icon(Icons.chevron_right,
-                          size: 16, color: AppColors.muted),
+                          size: 16, color: AppColors.mutedOf(context)),
                     ),
                   InkWell(
                     onTap: () => _onCrumbTap(appState, crumbs[i]),
@@ -58,8 +58,8 @@ class FolderBrowser extends StatelessWidget {
                         crumbs[i].name,
                         style: TextStyle(
                           color: i == crumbs.length - 1
-                              ? AppColors.textPrimary
-                              : AppColors.mutedLight,
+                              ? AppColors.textPrimaryOf(context)
+                              : AppColors.mutedLightOf(context),
                           fontSize: 13,
                           fontWeight: i == crumbs.length - 1
                               ? FontWeight.w600
@@ -91,7 +91,7 @@ class FolderBrowser extends StatelessWidget {
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: AppColors.background,
+      color: AppColors.backgroundOf(context),
       child: Row(
         children: [
           FilledButton.icon(
@@ -101,7 +101,7 @@ class FolderBrowser extends StatelessWidget {
             label: Text(isWorkLevel ? '播放全部' : '播放本文件夹'),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.accent,
-              foregroundColor: AppColors.background,
+              foregroundColor: AppColors.backgroundOf(context),
               padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
           ),
@@ -115,9 +115,9 @@ class FolderBrowser extends StatelessWidget {
           ],
           const Spacer(),
           Text('${appState.tracks.length} 首',
-              style: TextStyle(color: AppColors.mutedLight, fontSize: 12)),
+              style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12)),
           const SizedBox(width: 8),
-          _sortMenu(appState),
+          _sortMenu(context, appState),
         ],
       ),
     );
@@ -131,10 +131,10 @@ class FolderBrowser extends StatelessWidget {
     await appState.importDirectoryIntoWork(path, work.id!);
   }
 
-  Widget _sortMenu(AppState appState) {
+  Widget _sortMenu(BuildContext context, AppState appState) {
     return PopupMenuButton<String>(
       tooltip: '排序',
-      icon: const Icon(Icons.sort, size: 18, color: AppColors.mutedLight),
+      icon: Icon(Icons.sort, size: 18, color: AppColors.mutedLightOf(context)),
       onSelected: (v) {
         if (v == 'toggle') {
           appState.setSortDescending(!appState.sortDescending);
@@ -183,7 +183,7 @@ class FolderBrowser extends StatelessWidget {
       return Center(
         child: Text(
           appState.currentFolderId == null ? '该作品暂无内容' : '该文件夹为空',
-          style: const TextStyle(color: AppColors.mutedLight, fontSize: 13),
+          style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 13),
         ),
       );
     }
@@ -220,13 +220,13 @@ class _FolderTile extends StatelessWidget {
               child: Text(folder.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: AppColors.textPrimary,
+                  style: TextStyle(
+                      color: AppColors.textPrimaryOf(context),
                       fontSize: 14,
                       fontWeight: FontWeight.w500)),
             ),
             PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, size: 16, color: AppColors.muted),
+              icon: Icon(Icons.more_vert, size: 16, color: AppColors.mutedOf(context)),
               onSelected: (v) => _onMenu(context, appState, v),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'open', child: Text('打开', style: TextStyle(fontSize: 13))),
@@ -266,9 +266,10 @@ class _FolderTile extends StatelessWidget {
       case 'tags':
         final tags = await showTagPickerDialog(context, title: '为文件夹添加标签');
         if (tags == null || tags.isEmpty) return;
-        for (final t in tags) {
-          await appState.addTagToFolder(folder.id!, t);
-        }
+        if (!context.mounted) return;
+        final recursive = await _confirmSync(context);
+        if (recursive == null) return;
+        await appState.addTagsToFolder(folder.id!, tags, recursive: recursive);
         break;
       case 'delete':
         final ok = await confirmDialog(context,
@@ -279,6 +280,31 @@ class _FolderTile extends StatelessWidget {
         }
         break;
     }
+  }
+
+  /// 询问是否递归同步到子文件夹曲目；null=取消, true=同步, false=仅当前文件夹
+  Future<bool?> _confirmSync(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('同步操作'),
+        content: const Text(
+          '是否把该标签同步到文件夹内所有曲目及子文件夹？',
+          style: TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('仅标记文件夹')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('同步到所有曲目')),
+        ],
+      ),
+    );
   }
 }
 
@@ -300,7 +326,7 @@ class _TrackTile extends StatelessWidget {
       onTap: () => appState.playTrackAt(index),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        color: isCurrent ? AppColors.surface : null,
+        color: isCurrent ? AppColors.surfaceOf(context) : null,
         child: Row(
           children: [
             SizedBox(
@@ -311,7 +337,7 @@ class _TrackTile extends StatelessWidget {
                       : const Icon(Icons.play_arrow, size: 16, color: AppColors.accent))
                   : Text('${index + 1}',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.muted, fontSize: 12)),
+                      style: TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -323,7 +349,7 @@ class _TrackTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isCurrent ? AppColors.accent : AppColors.textPrimary,
+                      color: isCurrent ? AppColors.accent : AppColors.textPrimaryOf(context),
                       fontSize: 14,
                       fontWeight:
                           isCurrent ? FontWeight.w600 : FontWeight.normal,
@@ -336,7 +362,7 @@ class _TrackTile extends StatelessWidget {
                         .join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    style: TextStyle(color: AppColors.textSecondaryOf(context), fontSize: 12),
                   ),
                 ],
               ),
@@ -349,10 +375,10 @@ class _TrackTile extends StatelessWidget {
             if (track.durationMs != null)
               Text(
                 formatDuration(Duration(milliseconds: track.durationMs!)),
-                style: TextStyle(color: AppColors.mutedLight, fontSize: 12),
+                style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12),
               ),
             PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, size: 16, color: AppColors.muted),
+              icon: Icon(Icons.more_vert, size: 16, color: AppColors.mutedOf(context)),
               onSelected: (v) => _onMenu(context, appState, v),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'play', child: Text('播放', style: TextStyle(fontSize: 13))),

@@ -26,7 +26,7 @@ Future<bool?> confirmDialog(BuildContext context,
     builder: (ctx) => AlertDialog(
       title: Text(title),
       content: Text(content,
-          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+          style: TextStyle(color: AppColors.textSecondaryOf(ctx), fontSize: 13)),
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -226,6 +226,14 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
                     for (final t in entry.value)
                       CheckboxListTile(
                         dense: true,
+                        secondary: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: AppColors.parseColor(t.color),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
                         value: _selected.contains(t.id),
                         onChanged: (v) {
                           setState(() {

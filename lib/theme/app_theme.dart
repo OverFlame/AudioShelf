@@ -48,6 +48,44 @@ class AppColors {
   static Color namespaceColor(String namespace) =>
       namespaceColors[namespace] ?? accent;
 
+  /// 解析 "#rrggbb" 十六进制颜色（标签色点用）
+  static Color parseColor(String hex) {
+    try {
+      final h = hex.replaceFirst('#', '');
+      return Color(int.parse(h, radix: 16) | 0xFF000000);
+    } catch (_) {
+      return accent;
+    }
+  }
+
+  // ── 浅色常量（与深色一一对应）──
+  static const Color backgroundLight = Color(0xFFF1F2F7);
+  static const Color panelLight = Color(0xFFE9EBF2);
+  static const Color surfaceLight = Color(0xFFD8DBE4);
+  static const Color surfaceAltLight = Color(0xFFC4C8D4);
+  static const Color mutedLightC = Color(0xFF8C91A4);
+  static const Color mutedC = Color(0xFF7A7F93);
+  static const Color textPrimaryLight = Color(0xFF3C4050);
+  static const Color textSecondaryLight = Color(0xFF6C7184);
+
+  /// 是否深色主题
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  // ── 按当前主题亮度取色（浅色/深色自动切换）──
+  static Color backgroundOf(BuildContext c) =>
+      isDark(c) ? background : backgroundLight;
+  static Color panelOf(BuildContext c) => isDark(c) ? panel : panelLight;
+  static Color surfaceOf(BuildContext c) => isDark(c) ? surface : surfaceLight;
+  static Color surfaceAltOf(BuildContext c) =>
+      isDark(c) ? surfaceAlt : surfaceAltLight;
+  static Color mutedOf(BuildContext c) => isDark(c) ? muted : mutedC;
+  static Color mutedLightOf(BuildContext c) => isDark(c) ? mutedLight : mutedC;
+  static Color textPrimaryOf(BuildContext c) =>
+      isDark(c) ? textPrimary : textPrimaryLight;
+  static Color textSecondaryOf(BuildContext c) =>
+      isDark(c) ? textSecondary : textSecondaryLight;
+
   static ThemeData get lightThemeData => _buildTheme(Brightness.light);
   static ThemeData get darkThemeData => _buildTheme(Brightness.dark);
   static ThemeData get themeData => darkThemeData;

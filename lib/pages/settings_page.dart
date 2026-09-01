@@ -47,8 +47,8 @@ class SettingsPage extends StatelessWidget {
               future: appState.getDataDir(),
               builder: (context, snap) => Text(
                 snap.data ?? '...',
-                style: const TextStyle(
-                    fontSize: 11, color: AppColors.textSecondary),
+                style: TextStyle(
+                    fontSize: 11, color: AppColors.textSecondaryOf(context)),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),

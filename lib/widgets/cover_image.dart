@@ -31,10 +31,10 @@ class CoverImage extends StatelessWidget {
         width: width,
         height: height,
         fit: fit,
-        errorBuilder: (_, __, ___) => _placeholder(),
+        errorBuilder: (_, __, ___) => _placeholder(context),
       );
     } else {
-      child = _placeholder();
+      child = _placeholder(context);
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
@@ -42,15 +42,15 @@ class CoverImage extends StatelessWidget {
     );
   }
 
-  Widget _placeholder() {
+  Widget _placeholder(BuildContext context) {
     return Container(
       width: width,
       height: height,
-      color: AppColors.surface,
+      color: AppColors.surfaceOf(context),
       child: Icon(
         Icons.music_note,
         size: width * 0.4,
-        color: AppColors.muted,
+        color: AppColors.mutedOf(context),
       ),
     );
   }
