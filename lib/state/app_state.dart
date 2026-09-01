@@ -263,13 +263,16 @@ class AppState extends ChangeNotifier {
   }
 
   List<VirtualFolder> _sortFolders(List<VirtualFolder> list) {
-    list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return list;
+    // 先复制：入参可能是 const []（不可变），直接 sort 会抛 Unsupported operation
+    final sorted = List<VirtualFolder>.from(list);
+    sorted.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return sorted;
   }
 
   List<TrackItem> _sortTracks(List<TrackItem> list) {
+    final sorted = List<TrackItem>.from(list);
     final dir = _sortDescending ? -1 : 1;
-    list.sort((a, b) {
+    sorted.sort((a, b) {
       int cmp;
       switch (_sortKey) {
         case 'title':
@@ -290,7 +293,7 @@ class AppState extends ChangeNotifier {
       }
       return cmp * dir;
     });
-    return list;
+    return sorted;
   }
 
   // ═══════════════ 搜索 ═══════════════
