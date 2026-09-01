@@ -33,9 +33,8 @@ class TrackItem {
     required this.addedAt,
   });
 
-  /// 显示标题：优先元数据标题，否则文件名
-  String get displayTitle =>
-      (title == null || title!.trim().isEmpty) ? filename : title!;
+  /// 显示标题：直接显示源文件名（含扩展名）
+  String get displayTitle => filename;
 
   TrackItem copyWith({
     String? subtitlePath,

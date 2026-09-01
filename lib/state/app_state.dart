@@ -177,9 +177,9 @@ class AppState extends ChangeNotifier {
             ? <TrackItem>[]
             : await _trackDao.queryDirectInDir(_currentFolderPath!);
       } else if (_currentWork != null) {
+        // 严格按文件夹树：作品层只显示入口子文件夹，不直接平铺曲目
         folders = await _folderDao.listRootsByWork(_currentWork!.id!);
-        final paths = await _folderDao.getPathsByWork(_currentWork!.id!);
-        tracks = await _trackDao.queryByDirs(paths);
+        tracks = const [];
       } else {
         folders = const [];
         tracks = const [];
