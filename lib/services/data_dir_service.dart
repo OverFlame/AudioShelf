@@ -21,7 +21,9 @@ class DataDirService {
   String? _dataDir;
 
   Future<String> defaultDir() async {
-    final docs = await getApplicationDocumentsDirectory();
+    // 默认放在应用私有支持目录内（而非用户文档目录），各平台对应：
+    // Windows %APPDATA%、Linux ~/.local/share、Android 应用私有目录。
+    final docs = await getApplicationSupportDirectory();
     return p.join(docs.path, 'AudioShelf');
   }
 

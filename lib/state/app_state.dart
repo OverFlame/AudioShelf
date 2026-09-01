@@ -738,4 +738,36 @@ class AppState extends ChangeNotifier {
   // ═══════════════ 数据目录 ═══════════════
 
   Future<String> getDataDir() => DataDirService.instance.dataDir;
+
+  /// 迁移数据目录到 [newDir]：关闭数据库 → 复制数据 → 重开数据库 → 刷新。
+  Future<void> migrateDataDir(String newDir) async {
+    final oldDir = await DataDirService.instance.dataDir;
+    await DatabaseManager.instance.close();
+    final newD = await DataDirService.instance.migrateTo(newDir);
+    await DatabaseManager.instance.init();
+    // 更新数据目录内的封面缓存路径前缀（covers/track_*.jpg、covers/work_*.jpg）
+    await _rewriteCoverPaths(oldDir, newD);
+    await loadSettings();
+    await loadTags();
+    await refresh();
+    logInfo('AppState', '数据目录迁移完成: $oldDir -> $newD');
+  }
+
+  /// 把指向旧数据目录的封面路径改写为新数据目录（目录外的原图路径不动）
+  Future<void> _rewriteCoverPaths(String oldDir, String newDir) async {
+    final tracks = await _trackDao.queryAll();
+    for (final t in tracks) {
+      final cp = t.coverPath;
+      if (cp != null && cp.startsWith(oldDir)) {
+        await _trackDao.setCoverPath(t.id!, newDir + cp.substring(oldDir.length));
+      }
+    }
+    final works = await _workDao.listAll();
+    for (final w in works) {
+      final cp = w.coverPath;
+      if (cp != null && cp.startsWith(oldDir)) {
+        await _workDao.setCover(w.id!, newDir + cp.substring(oldDir.length));
+      }
+    }
+  }
 }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/settings_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/dialogs.dart';
 
 /// 设置页
 class SettingsPage extends StatelessWidget {
@@ -54,6 +55,13 @@ class SettingsPage extends StatelessWidget {
               ),
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.drive_file_move_outlined, size: 18),
+            title: const Text('迁移数据目录'),
+            subtitle: const Text('把数据库、封面缓存、设置整体迁移到其它位置'),
+            trailing: const Icon(Icons.chevron_right, size: 18),
+            onTap: () => _migrateDataDir(context, appState),
+          ),
           const Divider(height: 1),
           const _SectionHeader('关于'),
           const ListTile(
@@ -81,5 +89,23 @@ class _SectionHeader extends StatelessWidget {
               fontWeight: FontWeight.w600,
               color: AppColors.accent)),
     );
+  }
+}
+
+/// 迁移数据目录：选择新目录 → 确认 → 整体迁移 → 提示
+Future<void> _migrateDataDir(BuildContext context, AppState appState) async {
+  final dir = await pickDirectoryPath(title: '选择新的数据目录');
+  if (dir == null) return;
+  if (!context.mounted) return;
+  final ok = await confirmDialog(
+    context,
+    title: '迁移数据目录',
+    content: '将把数据库、封面缓存、设置整体迁移到：\n$dir\n\n原目录会保留，不会删除。',
+  );
+  if (ok != true) return;
+  await appState.migrateDataDir(dir);
+  if (context.mounted) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('数据已迁移到：$dir')));
   }
 }
