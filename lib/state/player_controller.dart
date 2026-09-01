@@ -13,7 +13,8 @@ enum RepeatMode { off, all, one }
 ///
 /// 提供播放队列、上一首/下一首、循环/随机、seek、位置流。
 class PlayerController extends ChangeNotifier {
-  final SoLoud _soloud = SoLoud.instance;
+  SoLoud? _soloud;
+  SoLoud get _engine => _soloud ??= SoLoud.instance;
   bool _initialized = false;
 
   List<TrackItem> _queue = [];
@@ -49,7 +50,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> init() async {
     if (_initialized) return;
-    await _soloud.init();
+    await _engine.init();
     _initialized = true;
     logInfo('Player', 'SoLoud initialized');
     _ticker?.cancel();
@@ -62,7 +63,7 @@ class PlayerController extends ChangeNotifier {
     final h = _handle;
     if (h == null) return;
     try {
-      _position = _soloud.getPosition(h);
+      _position = _engine.getPosition(h);
       notifyListeners();
     } catch (_) {
       // handle 已失效（例如刚播完），忽略
@@ -88,9 +89,9 @@ class PlayerController extends ChangeNotifier {
     }
     final track = _queue[_index];
     try {
-      _source = await _soloud.loadFile(track.path);
-      _duration = _soloud.getLength(_source!);
-      _handle = _soloud.play(_source!, volume: _volume);
+      _source = await _engine.loadFile(track.path);
+      _duration = _engine.getLength(_source!);
+      _handle = _engine.play(_source!, volume: _volume);
       _listenEnd();
       _playing = true;
       _position = Duration.zero;
@@ -117,7 +118,7 @@ class PlayerController extends ChangeNotifier {
   Future<void> _onEnded() async {
     if (_repeat == RepeatMode.one && _source != null) {
       // 单曲循环：重新播放同一 source
-      _handle = _soloud.play(_source!, volume: _volume);
+      _handle = _engine.play(_source!, volume: _volume);
       _position = Duration.zero;
       _playing = true;
       notifyListeners();
@@ -144,21 +145,21 @@ class PlayerController extends ChangeNotifier {
       await _loadAndPlay();
       return;
     }
-    _soloud.setPause(_handle!, false);
+    _engine.setPause(_handle!, false);
     _playing = true;
     notifyListeners();
   }
 
   Future<void> pause() async {
     if (_handle == null) return;
-    _soloud.setPause(_handle!, true);
+    _engine.setPause(_handle!, true);
     _playing = false;
     notifyListeners();
   }
 
   Future<void> resume() async {
     if (_handle == null) return;
-    _soloud.setPause(_handle!, false);
+    _engine.setPause(_handle!, false);
     _playing = true;
     notifyListeners();
   }
@@ -167,7 +168,7 @@ class PlayerController extends ChangeNotifier {
     final h = _handle;
     if (h == null) return;
     try {
-      _soloud.seek(h, d);
+      _engine.seek(h, d);
       _position = d;
       notifyListeners();
     } catch (e) {
@@ -235,7 +236,7 @@ class PlayerController extends ChangeNotifier {
     final h = _handle;
     if (h != null) {
       try {
-        _soloud.setVolume(h, _volume);
+        _engine.setVolume(h, _volume);
       } catch (_) {}
     }
     notifyListeners();
@@ -255,14 +256,14 @@ class PlayerController extends ChangeNotifier {
     final h = _handle;
     if (h != null) {
       try {
-        await _soloud.stop(h);
+        await _engine.stop(h);
       } catch (_) {}
       _handle = null;
     }
     final s = _source;
     if (s != null) {
       try {
-        await _soloud.disposeSource(s);
+        await _engine.disposeSource(s);
       } catch (_) {}
       _source = null;
     }
@@ -274,7 +275,7 @@ class PlayerController extends ChangeNotifier {
   void dispose() {
     _ticker?.cancel();
     _sub?.cancel();
-    _soloud.deinit();
+    _engine.deinit();
     super.dispose();
   }
 }

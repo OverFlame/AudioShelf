@@ -11,29 +11,41 @@ import 'services/settings_service.dart';
 import 'state/app_state.dart';
 import 'state/player_controller.dart';
 import 'theme/app_theme.dart';
+import 'utils/log_util.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await DataDirService.instance.init();
-  await SettingsService.instance.init();
-  await DatabaseManager.instance.init();
+  // 捕获未处理异常，避免启动失败时直接白屏
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    logError('FlutterError', details.exceptionAsString(), details.stack?.toString());
+  };
 
-  final player = PlayerController();
-  final appState = AppState(player: player);
-  await appState.init();
+  try {
+    await DataDirService.instance.init();
+    await SettingsService.instance.init();
+    await DatabaseManager.instance.init();
 
-  await MediaBridge.instance.init(player, appState);
-  unawaited(MediaBridge.instance.ensureNotificationPermission());
+    final player = PlayerController();
+    final appState = AppState(player: player);
+    await appState.init();
 
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: appState),
-        ChangeNotifierProvider.value(value: player),
-      ],
-      child: const AudioShelfApp(),
-    ),
-  );
+    await MediaBridge.instance.init(player, appState);
+    unawaited(MediaBridge.instance.ensureNotificationPermission());
+
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: appState),
+          ChangeNotifierProvider.value(value: player),
+        ],
+        child: const AudioShelfApp(),
+      ),
+    );
+  } catch (e, st) {
+    logError('Main', '启动失败', '$e\n$st');
+    runApp(_ErrorApp(message: '$e'));
+  }
 }
 
 class AudioShelfApp extends StatelessWidget {
@@ -49,6 +61,30 @@ class AudioShelfApp extends StatelessWidget {
       darkTheme: AppColors.darkThemeData,
       themeMode: themeMode,
       home: const HomePage(),
+    );
+  }
+}
+
+/// 启动失败时显示的页面，替代白屏，便于定位问题
+class _ErrorApp extends StatelessWidget {
+  final String message;
+  const _ErrorApp({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SelectableText(
+              '启动失败：\n\n$message',
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
