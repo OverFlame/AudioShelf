@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../db/folder_dao.dart';
@@ -114,6 +115,23 @@ class FolderBrowser extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          if (appState.selectedTrackIds.isNotEmpty) ...[
+            Text('已选 ${appState.selectedTrackIds.length} 首',
+                style: TextStyle(
+                    color: AppColors.mutedLightOf(context), fontSize: 12)),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: () => _batchAddTags(context, appState),
+              icon: const Icon(Icons.sell_outlined, size: 15),
+              label: const Text('批量加标签'),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              onPressed: () => appState.clearTrackSelection(),
+              icon: Icon(Icons.close, size: 16, color: AppColors.mutedOf(context)),
+              tooltip: '清除选择',
+            ),
+          ],
           Text('${appState.tracks.length} 首',
               style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12)),
           const SizedBox(width: 8),
@@ -129,6 +147,18 @@ class FolderBrowser extends StatelessWidget {
     final path = await pickDirectoryPath(title: '选择要加入「${work.name}」的文件夹');
     if (path == null) return;
     await appState.importDirectoryIntoWork(path, work.id!);
+  }
+
+  Future<void> _batchAddTags(BuildContext context, AppState appState) async {
+    final ids = appState.selectedTrackIds.toList();
+    if (ids.isEmpty) return;
+    final existing = await appState.getTagIdsOnTracks(ids);
+    if (!context.mounted) return;
+    final tags = await showTagPickerDialog(context,
+        title: '为选中曲目添加标签', selectedTagIds: existing);
+    if (tags == null) return;
+    await appState.addTagsToTracks(ids, tags);
+    appState.clearTrackSelection();
   }
 
   Widget _sortMenu(BuildContext context, AppState appState) {
@@ -321,23 +351,44 @@ class _TrackTile extends StatelessWidget {
         (p) => p.currentTrack?.path == track.path);
     final isPlaying =
         context.select<PlayerController, bool>((p) => p.playing);
+    final isSelected = appState.isTrackSelected(track.id ?? -1);
 
     return InkWell(
-      onTap: () => appState.playTrackAt(index),
+      onTap: () {
+        final id = track.id;
+        if (id == null) {
+          appState.playTrackAt(index);
+          return;
+        }
+        final ctrl = HardwareKeyboard.instance.isControlPressed;
+        final shift = HardwareKeyboard.instance.isShiftPressed;
+        if (ctrl) {
+          appState.toggleTrackSelect(id);
+        } else if (shift) {
+          appState.rangeTrackSelect(id);
+        } else {
+          appState.clearTrackSelection();
+          appState.playTrackAt(index);
+        }
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        color: isCurrent ? AppColors.surfaceOf(context) : null,
+        color: (isCurrent || isSelected)
+            ? AppColors.surfaceOf(context)
+            : null,
         child: Row(
           children: [
             SizedBox(
               width: 28,
-              child: isCurrent
-                  ? (isPlaying
-                      ? const Icon(Icons.graphic_eq, size: 16, color: AppColors.accent)
-                      : const Icon(Icons.play_arrow, size: 16, color: AppColors.accent))
-                  : Text('${index + 1}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
+              child: isSelected
+                  ? const Icon(Icons.check_box, size: 16, color: AppColors.accent)
+                  : isCurrent
+                      ? (isPlaying
+                          ? const Icon(Icons.graphic_eq, size: 16, color: AppColors.accent)
+                          : const Icon(Icons.play_arrow, size: 16, color: AppColors.accent))
+                      : Text('${index + 1}',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
             ),
             const SizedBox(width: 8),
             Expanded(

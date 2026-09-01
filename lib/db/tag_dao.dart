@@ -79,6 +79,12 @@ class TagDao {
     return Tag.fromMap(rows.first);
   }
 
+  Future<int> update(Tag tag) async {
+    if (tag.id == null) return 0;
+    return _db.update('tags', tag.toMap(),
+        where: 'id = ?', whereArgs: [tag.id]);
+  }
+
   Future<int> delete(int id) async {
     return _db.delete('tags', where: 'id = ?', whereArgs: [id]);
   }

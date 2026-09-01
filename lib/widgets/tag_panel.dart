@@ -532,6 +532,9 @@ class _TagPanelState extends State<TagPanel> {
             appState.toggleOrFilter(tag.id!);
             appState.toggleNotFilter(tag.id!);
             break;
+          case 'edit':
+            _showEditTagDialog(tag, appState);
+            break;
           case 'delete':
             _showDeleteTagDialog(tag, appState);
             break;
@@ -555,6 +558,8 @@ class _TagPanelState extends State<TagPanel> {
           const PopupMenuItem(
               value: 'clear', child: Text('清除此标签筛选', style: TextStyle(fontSize: 12))),
         const PopupMenuDivider(),
+        const PopupMenuItem(
+            value: 'edit', child: Text('重命名/改色', style: TextStyle(fontSize: 12))),
         PopupMenuItem(
           value: 'delete',
           child: Text('删除标签',
@@ -662,6 +667,86 @@ class _TagPanelState extends State<TagPanel> {
                 }
               },
               child: const Text('创建'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── 编辑标签对话框（重命名 / 改命名空间 / 改色）──
+  void _showEditTagDialog(Tag tag, AppState appState) {
+    final nameCtrl = TextEditingController(text: tag.name);
+    final nsCtrl = TextEditingController(
+        text: tag.namespace == 'general' ? '' : tag.namespace);
+    String color = tag.color;
+    const presetColors = [
+      '#a98cf5', '#f06e7f', '#f0a868', '#e2c275',
+      '#9ccb86', '#63bfc8', '#6fb6ec', '#9fa6ef',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('编辑标签'),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: '标签名'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nsCtrl,
+                  decoration: const InputDecoration(
+                      labelText: '命名空间 (可选)', hintText: '留空为 general'),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: presetColors.map((c) {
+                    final selected = color == c;
+                    return GestureDetector(
+                      onTap: () => setLocal(() => color = c),
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: AppColors.parseColor(c),
+                          shape: BoxShape.circle,
+                          border: selected
+                              ? Border.all(
+                                  color: AppColors.textPrimaryOf(ctx), width: 2)
+                              : null,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消')),
+            TextButton(
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                if (name.isNotEmpty) {
+                  final ns = nsCtrl.text.trim();
+                  appState.updateTag(tag.id!, name,
+                      namespace: ns.isEmpty ? 'general' : ns, color: color);
+                  Navigator.pop(ctx);
+                }
+              },
+              child: const Text('保存'),
             ),
           ],
         ),

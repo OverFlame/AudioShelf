@@ -72,6 +72,11 @@ class AppState extends ChangeNotifier {
   List<Tag> _allTags = [];
   List<Tag> get allTags => _allTags;
   final Map<int, List<Tag>> _trackTags = {};
+  // ── 曲目多选 ──
+  final Set<int> _selectedTrackIds = {};
+  Set<int> get selectedTrackIds => _selectedTrackIds;
+  int? _anchorTrackId;
+  bool isTrackSelected(int id) => _selectedTrackIds.contains(id);
   TagFilter _tagFilter = const TagFilter();
   TagFilter get tagFilter => _tagFilter;
   String _advancedFilter = '';
@@ -607,6 +612,94 @@ class AppState extends ChangeNotifier {
     _removeFromFilter(tagId);
     await loadTags();
     await refresh();
+  }
+
+  /// 更新标签（重命名 / 改命名空间 / 改色）
+  Future<void> updateTag(int tagId, String name,
+      {String? namespace, String? color}) async {
+    final existing = await _tagDao.getById(tagId);
+    if (existing == null) return;
+    await _tagDao.update(Tag(
+      id: tagId,
+      namespace: namespace ?? existing.namespace,
+      name: name,
+      color: color ?? existing.color,
+    ));
+    _trackTags.clear();
+    await loadTags();
+    await refresh();
+  }
+
+  // ═══════════════ 曲目多选 + 批量标签 ═══════════════
+
+  void toggleTrackSelect(int id) {
+    if (_selectedTrackIds.contains(id)) {
+      _selectedTrackIds.remove(id);
+    } else {
+      _selectedTrackIds.add(id);
+    }
+    _anchorTrackId = id;
+    notifyListeners();
+  }
+
+  void rangeTrackSelect(int id) {
+    final list = _tracks;
+    final anchorIdx = _anchorTrackId == null
+        ? -1
+        : list.indexWhere((t) => t.id == _anchorTrackId);
+    final curIdx = list.indexWhere((t) => t.id == id);
+    if (anchorIdx < 0 || curIdx < 0) {
+      toggleTrackSelect(id);
+      return;
+    }
+    final lo = anchorIdx < curIdx ? anchorIdx : curIdx;
+    final hi = anchorIdx < curIdx ? curIdx : anchorIdx;
+    for (final t in list.sublist(lo, hi + 1)) {
+      if (t.id != null) _selectedTrackIds.add(t.id!);
+    }
+    _anchorTrackId = id;
+    notifyListeners();
+  }
+
+  void clearTrackSelection() {
+    _selectedTrackIds.clear();
+    _anchorTrackId = null;
+    notifyListeners();
+  }
+
+  Future<void> addTagsToTracks(Iterable<int> trackIds, List<Tag> tags) async {
+    for (final id in trackIds) {
+      for (final tag in tags) {
+        await _tagDao.addTagToTrack(id, tag.id!);
+      }
+    }
+    _trackTags.clear();
+    notifyListeners();
+  }
+
+  Future<void> removeTagsFromTracks(
+      Iterable<int> trackIds, List<Tag> tags) async {
+    for (final id in trackIds) {
+      for (final tag in tags) {
+        await _tagDao.removeTagFromTrack(id, tag.id!);
+      }
+    }
+    _trackTags.clear();
+    notifyListeners();
+  }
+
+  /// 返回这批曲目上已绑定的标签 id 集合（用于「移除标签」时过滤可选项）
+  Future<Set<int>> getTagIdsOnTracks(Iterable<int> trackIds) async {
+    final ids = trackIds.toList();
+    if (ids.isEmpty) return {};
+    final map = await _tagDao.getTagsForTracks(ids);
+    final result = <int>{};
+    for (final tags in map.values) {
+      for (final t in tags) {
+        if (t.id != null) result.add(t.id!);
+      }
+    }
+    return result;
   }
 
   void _removeFromFilter(int tagId) {
