@@ -66,7 +66,9 @@ class DatabaseManager {
       },
     );
 
-    await _db!.execute('PRAGMA journal_mode=WAL');
+    // journal_mode=WAL 会返回一行结果，Android 端 execSQL 不允许，需用 rawQuery。
+    // （Android 8+ 本身默认 WAL，此处桌面端开启；Android 端该语句会被安全执行。）
+    await _db!.rawQuery('PRAGMA journal_mode=WAL');
     logInfo('Database', 'Initialized OK (WAL+FK enabled)');
   }
 
