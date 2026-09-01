@@ -1,9 +1,9 @@
 @echo off
-rem AudioShelf Windows 构建脚本
+rem AudioShelf Windows build script
 setlocal
 cd /d "%~dp0.."
 
-rem 中国镜像
+rem China mirrors
 set PUB_HOSTED_URL=https://pub.flutter-io.cn
 set FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn
 
@@ -16,9 +16,9 @@ call flutter --no-version-check --suppress-analytics build windows --release
 if errorlevel 1 goto :err
 
 echo.
-echo 构建完成：build\windows\x64\runner\Release\
+echo Build done: build\windows\x64\runner\Release\
 goto :eof
 
 :err
-echo 构建失败
+echo Build failed (exit code %errorlevel%)
 exit /b 1
