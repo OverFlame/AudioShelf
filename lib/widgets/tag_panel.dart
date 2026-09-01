@@ -9,7 +9,9 @@ import 'dialogs.dart';
 
 /// 左侧面板：导入 + 作品集 + 标签（对标 PictureViewer 的标签面板）
 class TagPanel extends StatefulWidget {
-  const TagPanel({super.key});
+  /// 导航后回调（窄屏抽屉里用于关闭抽屉）
+  final VoidCallback? onNavigate;
+  const TagPanel({super.key, this.onNavigate});
 
   @override
   State<TagPanel> createState() => _TagPanelState();
@@ -187,21 +189,30 @@ class _TagPanelState extends State<TagPanel> {
                 selected: appState.currentWork == null,
                 icon: Icons.home_outlined,
                 label: '全部作品',
-                onTap: () => appState.goHome(),
+                onTap: () {
+                  appState.goHome();
+                  widget.onNavigate?.call();
+                },
               ),
               for (final w in appState.works)
                 _navEntry(
                   selected: appState.currentWork?.id == w.id,
                   icon: Icons.album_outlined,
                   label: w.name,
-                  onTap: () => appState.enterWork(w.id!),
+                  onTap: () {
+                    appState.enterWork(w.id!);
+                    widget.onNavigate?.call();
+                  },
                 ),
               for (final f in appState.unassignedFolders)
                 _navEntry(
                   selected: appState.currentFolderId == f.id,
                   icon: Icons.folder_outlined,
                   label: '未归类 · ${f.name}',
-                  onTap: () => appState.enterFolder(f.id!),
+                  onTap: () {
+                    appState.enterFolder(f.id!);
+                    widget.onNavigate?.call();
+                  },
                 ),
             ],
           ),

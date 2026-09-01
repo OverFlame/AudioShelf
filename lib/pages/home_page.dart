@@ -10,20 +10,39 @@ import '../widgets/tag_panel.dart';
 import '../widgets/works_grid.dart';
 import 'settings_page.dart';
 
-/// 主页面：左侧面板 + 中间内容 + 底部播放栏
+/// 主页面：响应式布局。
+/// - 宽屏（>=720）：左侧面板 + 中间内容
+/// - 窄屏（手机）：抽屉（汉堡菜单）+ 中间内容
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
+    final isWide = MediaQuery.of(context).size.width >= 720;
+
+    final center = appState.loading
+        ? const Center(
+            child: CircularProgressIndicator(color: AppColors.accent))
+        : (appState.currentWork == null
+            ? Column(
+                children: [
+                  if (appState.recentTracks.isNotEmpty)
+                    _RecentBar(appState: appState),
+                  const Expanded(child: WorksGrid()),
+                ],
+              )
+            : const FolderBrowser());
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AudioShelf',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: isWide
+            ? const Text('AudioShelf',
+                style: TextStyle(fontWeight: FontWeight.bold))
+            : _searchField(appState),
         actions: [
-          _searchBox(appState),
+          if (isWide)
+            SizedBox(width: 220, child: _searchField(appState)),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',
@@ -33,49 +52,47 @@ class HomePage extends StatelessWidget {
           ),
         ],
       ),
-      body: Row(
-        children: [
-          Container(
-            width: 260,
-            color: AppColors.panelOf(context),
-            child: const TagPanel(),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: appState.loading
-                ? const Center(
-                    child: CircularProgressIndicator(color: AppColors.accent))
-                : (appState.currentWork == null
-                    ? Column(
-                        children: [
-                          if (appState.recentTracks.isNotEmpty)
-                            _RecentBar(appState: appState),
-                          const Expanded(child: WorksGrid()),
-                        ],
-                      )
-                    : const FolderBrowser()),
-          ),
-        ],
-      ),
+      drawer: isWide
+          ? null
+          : Drawer(
+              width: 290,
+              child: SafeArea(
+                child: Builder(
+                  builder: (drawerCtx) => TagPanel(
+                    onNavigate: () => Navigator.of(drawerCtx).pop(),
+                  ),
+                ),
+              ),
+            ),
+      body: isWide
+          ? Row(
+              children: [
+                Container(
+                  width: 260,
+                  color: AppColors.panelOf(context),
+                  child: const TagPanel(),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: center),
+              ],
+            )
+          : center,
       bottomNavigationBar: const PlayerBar(),
     );
   }
 
-  Widget _searchBox(AppState appState) {
-    return SizedBox(
-      width: 220,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: TextField(
-          decoration: const InputDecoration(
-            hintText: '搜索曲目...',
-            isDense: true,
-            prefixIcon: Icon(Icons.search, size: 18),
-            contentPadding: EdgeInsets.symmetric(vertical: 8),
-          ),
-          style: const TextStyle(fontSize: 13),
-          onChanged: appState.setSearchQuery,
+  Widget _searchField(AppState appState) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: TextField(
+        decoration: const InputDecoration(
+          hintText: '搜索曲目...',
+          isDense: true,
+          prefixIcon: Icon(Icons.search, size: 18),
+          contentPadding: EdgeInsets.symmetric(vertical: 8),
         ),
+        style: const TextStyle(fontSize: 13),
+        onChanged: appState.setSearchQuery,
       ),
     );
   }

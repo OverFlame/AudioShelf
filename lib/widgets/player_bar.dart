@@ -17,6 +17,7 @@ class PlayerBar extends StatelessWidget {
     final player = context.watch<PlayerController>();
     final appState = context.watch<AppState>();
     final track = player.currentTrack;
+    final isWide = MediaQuery.of(context).size.width >= 600;
 
     if (track == null) {
       return Container(
@@ -103,24 +104,26 @@ class PlayerBar extends StatelessWidget {
                         color: AppColors.mutedLightOf(context), fontSize: 11),
                   ),
                   const SizedBox(width: 6),
-                  // 音量
-                  IconButton(
-                    icon: Icon(_volumeIcon(player.volume),
-                        size: 18, color: AppColors.mutedLightOf(context)),
-                    tooltip: '音量',
-                    onPressed: () => _showVolumeDialog(context, player),
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      player.shuffle ? Icons.shuffle : Icons.shuffle_on_outlined,
-                      size: 18,
-                      color: player.shuffle
-                          ? AppColors.accent
-                          : AppColors.mutedLightOf(context),
+                  if (isWide) ...[
+                    // 音量
+                    IconButton(
+                      icon: Icon(_volumeIcon(player.volume),
+                          size: 18, color: AppColors.mutedLightOf(context)),
+                      tooltip: '音量',
+                      onPressed: () => _showVolumeDialog(context, player),
                     ),
-                    tooltip: '随机播放',
-                    onPressed: player.toggleShuffle,
-                  ),
+                    IconButton(
+                      icon: Icon(
+                        player.shuffle ? Icons.shuffle : Icons.shuffle_on_outlined,
+                        size: 18,
+                        color: player.shuffle
+                            ? AppColors.accent
+                            : AppColors.mutedLightOf(context),
+                      ),
+                      tooltip: '随机播放',
+                      onPressed: player.toggleShuffle,
+                    ),
+                  ],
                   IconButton(
                     icon: Icon(Icons.skip_previous,
                         size: 26, color: AppColors.textPrimaryOf(context)),
@@ -144,17 +147,18 @@ class PlayerBar extends StatelessWidget {
                     tooltip: '下一首',
                     onPressed: () => player.next(),
                   ),
-                  IconButton(
-                    icon: Icon(
-                      _repeatIcon(player.repeatMode),
-                      size: 18,
-                      color: player.repeatMode != RepeatMode.off
-                          ? AppColors.accent
-                          : AppColors.mutedLightOf(context),
+                  if (isWide)
+                    IconButton(
+                      icon: Icon(
+                        _repeatIcon(player.repeatMode),
+                        size: 18,
+                        color: player.repeatMode != RepeatMode.off
+                            ? AppColors.accent
+                            : AppColors.mutedLightOf(context),
+                      ),
+                      tooltip: '循环模式',
+                      onPressed: () => _cycleRepeat(player),
                     ),
-                    tooltip: '循环模式',
-                    onPressed: () => _cycleRepeat(player),
-                  ),
                   IconButton(
                     icon: const Icon(Icons.subtitles_outlined,
                         size: 20, color: AppColors.teal),
