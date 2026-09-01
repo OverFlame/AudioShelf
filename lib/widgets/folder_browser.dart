@@ -360,6 +360,11 @@ class _TrackTile extends StatelessWidget {
           appState.playTrackAt(index);
           return;
         }
+        // 多选模式下点击 = 切换选中
+        if (appState.selectionMode) {
+          appState.toggleTrackSelect(id);
+          return;
+        }
         final ctrl = HardwareKeyboard.instance.isControlPressed;
         final shift = HardwareKeyboard.instance.isShiftPressed;
         if (ctrl) {
@@ -370,6 +375,12 @@ class _TrackTile extends StatelessWidget {
           appState.clearTrackSelection();
           appState.playTrackAt(index);
         }
+      },
+      onLongPress: () {
+        // 长按进入多选模式（移动端），并选中该曲目
+        final id = track.id;
+        if (id == null) return;
+        appState.enterSelectionMode(id);
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

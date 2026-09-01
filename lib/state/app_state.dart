@@ -77,6 +77,8 @@ class AppState extends ChangeNotifier {
   final Set<int> _selectedTrackIds = {};
   Set<int> get selectedTrackIds => _selectedTrackIds;
   int? _anchorTrackId;
+  bool _selectionMode = false;
+  bool get selectionMode => _selectionMode;
   bool isTrackSelected(int id) => _selectedTrackIds.contains(id);
   TagFilter _tagFilter = const TagFilter();
   TagFilter get tagFilter => _tagFilter;
@@ -674,7 +676,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 长按进入多选模式（移动端）；桌面 Ctrl+点击也可走此路径
+  void enterSelectionMode(int id) {
+    _selectionMode = true;
+    _selectedTrackIds.add(id);
+    _anchorTrackId = id;
+    notifyListeners();
+  }
+
   void clearTrackSelection() {
+    _selectionMode = false;
     _selectedTrackIds.clear();
     _anchorTrackId = null;
     notifyListeners();
