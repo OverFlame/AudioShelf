@@ -27,6 +27,14 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // 使用较新 CMake：NDK r28 与 Flutter 默认的 CMake 3.22.1 存在
+        // "Check for working CXX compiler ... broken" 兼容问题。
+        externalNativeBuild {
+            cmake {
+                version = "3.30.5"
+            }
+        }
     }
 
     buildTypes {
