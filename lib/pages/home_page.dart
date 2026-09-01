@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/cover_image.dart';
 import '../widgets/folder_browser.dart';
 import '../widgets/player_bar.dart';
 import '../widgets/tag_panel.dart';
@@ -45,7 +46,13 @@ class HomePage extends StatelessWidget {
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.accent))
                 : (appState.currentWork == null
-                    ? const WorksGrid()
+                    ? Column(
+                        children: [
+                          if (appState.recentTracks.isNotEmpty)
+                            _RecentBar(appState: appState),
+                          const Expanded(child: WorksGrid()),
+                        ],
+                      )
                     : const FolderBrowser()),
           ),
         ],
@@ -69,6 +76,71 @@ class HomePage extends StatelessWidget {
           style: const TextStyle(fontSize: 13),
           onChanged: appState.setSearchQuery,
         ),
+      ),
+    );
+  }
+}
+
+/// 最近播放横条
+class _RecentBar extends StatelessWidget {
+  final AppState appState;
+  const _RecentBar({required this.appState});
+
+  @override
+  Widget build(BuildContext context) {
+    final tracks = appState.recentTracks;
+    return SizedBox(
+      height: 122,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+            child: Text('最近播放',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimaryOf(context))),
+          ),
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: tracks.length,
+              itemBuilder: (ctx, i) {
+                final t = tracks[i];
+                return InkWell(
+                  onTap: () => appState.playRecentTracks(i),
+                  child: SizedBox(
+                    width: 100,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CoverImage(
+                              path: t.coverPath,
+                              width: 72,
+                              height: 72,
+                              borderRadius: 8),
+                          const SizedBox(height: 4),
+                          Text(
+                            t.filename,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondaryOf(context)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

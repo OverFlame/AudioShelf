@@ -106,4 +106,12 @@ class SettingsService {
     _data['expr_history'] = const <String>[];
     await _save();
   }
+
+  // ── 封面缓存上限（MB，0 表示不限制）──
+  int get coverCacheLimitMB => (_data['cover_cache_mb'] as int?) ?? 512;
+
+  Future<void> setCoverCacheLimitMB(int mb) async {
+    _data['cover_cache_mb'] = mb.clamp(0, 8192);
+    await _save();
+  }
 }

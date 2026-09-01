@@ -8,6 +8,7 @@ import '../db/folder_dao.dart';
 import '../db/tag_dao.dart';
 import '../db/track_dao.dart';
 import '../db/work_dao.dart';
+import '../services/cover_service.dart';
 import '../services/data_dir_service.dart';
 import '../services/import_service.dart';
 import '../services/settings_service.dart';
@@ -89,6 +90,14 @@ class AppState extends ChangeNotifier {
   double _importProgress = 0;
   double get importProgress => _importProgress;
 
+  // ── 最近播放 ──
+  List<TrackItem> _recentTracks = [];
+  List<TrackItem> get recentTracks => _recentTracks;
+
+  // ── 封面缓存上限（MB，0 表示不限制）──
+  int _coverCacheLimitMB = 512;
+  int get coverCacheLimitMB => _coverCacheLimitMB;
+
   // ── 设置 ──
   ThemeMode _themeMode = ThemeMode.dark;
   ThemeMode get themeMode => _themeMode;
@@ -111,8 +120,11 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     logInfo('AppState', 'Initializing...');
+    player.onTrackStarted = _onTrackStarted;
     await loadSettings();
     await loadTags();
+    await loadRecentTracks();
+    await loadCoverCacheLimit();
     await refresh();
     logInfo('AppState', 'Initialized OK');
   }
@@ -498,6 +510,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       _folderVersion++;
       await refresh();
+      await enforceCoverCacheLimit();
     }
   }
 
@@ -862,5 +875,54 @@ class AppState extends ChangeNotifier {
         await _workDao.setCover(w.id!, newDir + cp.substring(oldDir.length));
       }
     }
+  }
+
+  // ═══════════════ 最近播放 / 播放历史 ═══════════════
+
+  void _onTrackStarted(TrackItem track) {
+    final id = track.id;
+    if (id == null) return;
+    unawaited(_trackDao
+        .recordPlay(id, DateTime.now().millisecondsSinceEpoch)
+        .then((_) => loadRecentTracks()));
+  }
+
+  Future<void> loadRecentTracks() async {
+    _recentTracks = await _trackDao.recentPlayedTracks();
+    notifyListeners();
+  }
+
+  Future<void> playRecentTracks(int startIndex) async {
+    if (_recentTracks.isEmpty) return;
+    await player.playQueue(_recentTracks, startIndex: startIndex);
+  }
+
+  // ═══════════════ 封面缓存管理 ═══════════════
+
+  Future<void> loadCoverCacheLimit() async {
+    _coverCacheLimitMB = SettingsService.instance.coverCacheLimitMB;
+  }
+
+  Future<int> getCoverCacheSizeBytes() =>
+      CoverService.embeddedCacheSizeBytes();
+
+  Future<int> clearCoverCache() async {
+    final freed = await CoverService.clearEmbeddedCache();
+    notifyListeners();
+    return freed;
+  }
+
+  Future<void> setCoverCacheLimit(int mb) async {
+    _coverCacheLimitMB = mb.clamp(0, 8192);
+    await SettingsService.instance.setCoverCacheLimitMB(_coverCacheLimitMB);
+    if (_coverCacheLimitMB > 0) {
+      await CoverService.enforceLimit(_coverCacheLimitMB * 1024 * 1024);
+    }
+    notifyListeners();
+  }
+
+  Future<void> enforceCoverCacheLimit() async {
+    if (_coverCacheLimitMB <= 0) return;
+    await CoverService.enforceLimit(_coverCacheLimitMB * 1024 * 1024);
   }
 }

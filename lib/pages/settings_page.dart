@@ -63,6 +63,52 @@ class SettingsPage extends StatelessWidget {
             onTap: () => _migrateDataDir(context, appState),
           ),
           const Divider(height: 1),
+          const _SectionHeader('封面缓存'),
+          ListTile(
+            leading: const Icon(Icons.image_outlined, size: 18),
+            title: const Text('内嵌封面缓存'),
+            subtitle: FutureBuilder<int>(
+              future: appState.getCoverCacheSizeBytes(),
+              builder: (context, snap) => Text(
+                '${_fmtMB(snap.data ?? 0)} MB',
+                style: TextStyle(
+                    fontSize: 11, color: AppColors.textSecondaryOf(context)),
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.tune, size: 18),
+            title: const Text('缓存上限'),
+            trailing: DropdownButton<int>(
+              value: appState.coverCacheLimitMB,
+              underline: const SizedBox.shrink(),
+              items: const [
+                DropdownMenuItem(value: 128, child: Text('128 MB')),
+                DropdownMenuItem(value: 256, child: Text('256 MB')),
+                DropdownMenuItem(value: 512, child: Text('512 MB')),
+                DropdownMenuItem(value: 1024, child: Text('1 GB')),
+                DropdownMenuItem(value: 2048, child: Text('2 GB')),
+                DropdownMenuItem(value: 0, child: Text('不限制')),
+              ],
+              onChanged: (v) {
+                if (v != null) appState.setCoverCacheLimit(v);
+              },
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cleaning_services_outlined, size: 18),
+            title: const Text('清理封面缓存'),
+            subtitle: const Text('删除内嵌封面缓存（可重新生成），保留自定义封面'),
+            trailing: const Icon(Icons.chevron_right, size: 18),
+            onTap: () async {
+              final freed = await appState.clearCoverCache();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('已清理，释放 ${_fmtMB(freed)} MB')));
+              }
+            },
+          ),
+          const Divider(height: 1),
           const _SectionHeader('关于'),
           const ListTile(
             leading: Icon(Icons.info_outline, size: 18),
@@ -91,6 +137,8 @@ class _SectionHeader extends StatelessWidget {
     );
   }
 }
+
+String _fmtMB(int bytes) => (bytes / 1024 / 1024).toStringAsFixed(1);
 
 /// 迁移数据目录：选择新目录 → 确认 → 整体迁移 → 提示
 Future<void> _migrateDataDir(BuildContext context, AppState appState) async {

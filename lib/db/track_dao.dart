@@ -239,6 +239,31 @@ class TrackDao {
     return deleted;
   }
 
+  // ═══ 播放历史 ═══
+
+  /// 记录一次播放（插入历史）
+  Future<void> recordPlay(int trackId, int playedAt) async {
+    await _db.insert('play_history',
+        {'track_id': trackId, 'played_at': playedAt});
+    // 仅保留最近 200 条，避免无限增长
+    await _db.rawDelete(
+        'DELETE FROM play_history WHERE id NOT IN '
+        '(SELECT id FROM play_history ORDER BY played_at DESC LIMIT 200)');
+  }
+
+  /// 最近播放的曲目（按最后播放时间倒序，去重）
+  Future<List<TrackItem>> recentPlayedTracks({int limit = 50}) async {
+    final rows = await _db.rawQuery('''
+      SELECT t.*, MAX(h.played_at) AS last_played
+      FROM play_history h
+      INNER JOIN tracks t ON t.id = h.track_id
+      GROUP BY h.track_id
+      ORDER BY last_played DESC
+      LIMIT ?
+    ''', [limit]);
+    return rows.map(TrackItem.fromMap).toList();
+  }
+
   /// 归一化目录路径，返回 (带分隔符的前缀, 分隔符)
   static (String, String) _directPrefix(String dirPath) {
     var base = dirPath;

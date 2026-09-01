@@ -52,6 +52,76 @@ class CoverService {
     }
   }
 
+  /// 封面缓存目录（公开）
+  static Future<String> coversDir() => _coversDir();
+
+  /// 计算内嵌封面缓存（track_*.jpg）总字节数
+  static Future<int> embeddedCacheSizeBytes() async {
+    try {
+      final dir = await _coversDir();
+      final d = Directory(dir);
+      if (!d.existsSync()) return 0;
+      int total = 0;
+      await for (final e in d.list()) {
+        if (e is File && p.basename(e.path).startsWith('track_')) {
+          total += await e.length();
+        }
+      }
+      return total;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 清理内嵌封面缓存（track_*.jpg，可重新从音频提取），返回释放字节数
+  static Future<int> clearEmbeddedCache() async {
+    try {
+      final dir = await _coversDir();
+      final d = Directory(dir);
+      if (!d.existsSync()) return 0;
+      int freed = 0;
+      await for (final e in d.list()) {
+        if (e is File && p.basename(e.path).startsWith('track_')) {
+          freed += await e.length();
+          await e.delete();
+        }
+      }
+      logInfo('Cover', '清理内嵌封面缓存，释放 $freed 字节');
+      return freed;
+    } catch (e) {
+      logWarn('Cover', '清理内嵌封面缓存失败: $e');
+      return 0;
+    }
+  }
+
+  /// 超出上限时按最旧优先删除内嵌封面（track_*.jpg）
+  static Future<void> enforceLimit(int maxBytes) async {
+    if (maxBytes <= 0) return;
+    try {
+      final dir = await _coversDir();
+      final d = Directory(dir);
+      if (!d.existsSync()) return;
+      final files = <File>[];
+      await for (final e in d.list()) {
+        if (e is File && p.basename(e.path).startsWith('track_')) {
+          files.add(e);
+        }
+      }
+      files.sort(
+          (a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+      int total = files.fold(0, (s, f) => s + f.lengthSync());
+      for (final f in files) {
+        if (total <= maxBytes) break;
+        total -= f.lengthSync();
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    } catch (e) {
+      logWarn('Cover', 'enforceLimit 失败: $e');
+    }
+  }
+
   static String _extFromMime(String mime) {
     final m = mime.toLowerCase();
     if (m.contains('png')) return 'png';

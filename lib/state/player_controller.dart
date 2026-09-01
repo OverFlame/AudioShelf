@@ -42,6 +42,9 @@ class PlayerController extends ChangeNotifier {
       hasTrack ? _queue[_index] : null;
   int get queueLength => _queue.length;
 
+  /// 每首曲目开始播放时回调（用于记录播放历史）
+  void Function(TrackItem track)? onTrackStarted;
+
   Timer? _ticker;
 
   Future<void> init() async {
@@ -92,6 +95,7 @@ class PlayerController extends ChangeNotifier {
       _playing = true;
       _position = Duration.zero;
       logInfo('Player', '播放: ${track.path}');
+      onTrackStarted?.call(track);
     } catch (e) {
       logError('Player', '加载失败 ${track.path}: $e');
       _playing = false;

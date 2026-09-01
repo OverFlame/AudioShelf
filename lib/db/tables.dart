@@ -2,7 +2,7 @@
 class Tables {
   Tables._();
 
-  static const int version = 1;
+  static const int version = 2;
 
   static const List<String> createStatements = [
     // 作品集（专辑）
@@ -89,8 +89,31 @@ class Tables {
     )
     ''',
     'CREATE INDEX IF NOT EXISTS idx_folder_tags_tag ON folder_tags(tag_id)',
+
+    // 播放历史
+    '''
+    CREATE TABLE play_history (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      played_at INTEGER NOT NULL
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id)',
+    'CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at)',
   ];
 
   /// 迁移脚本（按 version 递增）
-  static const Map<int, List<String>> migrations = {};
+  static const Map<int, List<String>> migrations = {
+    2: [
+      '''
+      CREATE TABLE play_history (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        played_at INTEGER NOT NULL
+      )
+      ''',
+      'CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id)',
+      'CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at)',
+    ],
+  };
 }
