@@ -19,12 +19,15 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 # sqlite3（sqflite_common_ffi 依赖）使用系统库，避免构建时从 GitHub 下载
-# 预编译二进制（国内网络无法访问 GitHub）。桌面端用系统 libsqlite3，Android 端
-# 实际走 sqflite 插件（不使用该 FFI），三端均安全。
+# 预编译二进制（国内网络无法访问 GitHub）。
+#   Linux  : 系统自带 libsqlite3.so
+#   Windows: 系统无 sqlite3.dll，改用 Windows 自带的 winsqlite3.dll（Win10+）
+#   Android: 走 sqflite 插件，不使用该 FFI
 hooks:
   user_defines:
     sqlite3:
       source: system
+      name_windows: winsqlite3
 
 environment:
   sdk: ^3.12.0
