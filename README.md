@@ -125,6 +125,13 @@ Android 端内置前台服务（`PlaybackService.kt`）+ MediaSession + MediaSty
 - 删除作品/文件夹均为「虚拟」删除，不会删除磁盘上的音频/字幕文件。
 - 字幕匹配规则：`a.mp3.vtt` 优先于 `a.vtt`；同一目录内命名风格一致即可被识别。
 
+## 分支与协作
+
+- `master`：开发分支，日常提交推送目标（`git push` 默认推 master）。
+- `main`：稳定分支，**仅由维护者通过 PR 从 master 合并**，不接受直接推送。
+
+开发历程、技术决策与跨平台踩坑记录见 [PROJECT_LOG.md](PROJECT_LOG.md)。
+
 ## 许可证
 
 本项目采用 [MIT License](LICENSE)。
