@@ -81,9 +81,10 @@
 
 ### 阶段七 · 代码质量审查与竞态修复
 
-- 审查：对 `lib/` 与 `test/` 做只读审查，产出 `docs/code-review.md`（27 条，P0 三条、P1 十七条、P2 七条 + 轻微项与死码清单）。审查重点是与阶段六同类的竞态、状态不一致与资源泄漏。
-- 环境：宿主无 Flutter/Dart SDK，先按 `docs/wsl-flutter-setup.md` 在 WSL 装好 Flutter 3.47.5 / Dart 3.13.4。国内镜像（`storage.flutter-io.cn`）实测约 70 MB/s，官方源约 0.43 MB/s。`flutter analyze` 基线 6 条 info，`flutter test` 基线 15/15。
+- 审查：对 `lib/` 与 `test/` 做只读审查，产出 27 条发现（P0 三条、P1 十七条、P2 七条 + 轻微项与死码清单），重点是与阶段六同类的竞态、状态不一致与资源泄漏。全文在本地工作稿 `docs/code-review.md`，**不入库**。
+- 环境：宿主无 Flutter/Dart SDK，先按本地工作稿 `docs/wsl-flutter-setup.md`（**不入库**）在 WSL 装好 Flutter 3.47.5 / Dart 3.13.4。国内镜像（`storage.flutter-io.cn`）实测约 70 MB/s，官方源约 0.43 MB/s。`flutter analyze` 基线 6 条 info，`flutter test` 基线 15/15。
 - 修复节奏：按报告里的「建议修复顺序」分轮推进，每轮都跑 `flutter analyze` + `flutter test`，并对新增用例做**变异验证**（改坏实现必须让用例失败，否则该用例没有区分力）。
+- 结论：27 条全部修完（第 14 条随第 1 项、第 22 条随第 3 项一起修掉），分九轮推进，用例从 15 例增到 72 例，`flutter analyze` 始终 6 条 info、0 error。各轮结束时的用例数：第一、二轮合计 22，之后 29 → 32 → 37 → 44 → 48 → 63 → 72。
 
 | 轮次 | 修的条目 | 关键改动 |
 | --- | --- | --- |
@@ -103,10 +104,10 @@
 - 教训三：导入守卫有三处（AppState 入口的拒绝分支、`ImportService` 的静态标志、事后删空作品），互为冗余。变异验证时单独去掉任一处，5 个用例仍全绿——是另一处接的手（第二次导入拿到 0 条事件 → 事后兜底把刚建的作品删掉）。测试断言的是「最终只有一个作品」这个行为，不是某一处代码；要证明每处都必需，得两处一起改。
 - 教训四：删文件夹留下的孤儿曲目有个更硬的后遗症。曲目只在 `folder_paths` 的路径前缀下可见，孤儿行既搜得到、树里又进不去，而且会让那个目录再导入时被第 8 项的「全部已入库」判为无新内容——目录从此挂不回来。所以「删文件夹」必须顺手清理，不能留给用户手动收拾。
 - 教训五：变异脚本的替换锚点必须唯一，否则「拦住了」是编译失败的假信号。第一版脚本用 `return _db.transaction((txn) async {` 当锚点，`folder_dao.dart` 里 `delete` 与 `ensureByPath` 都匹配，切片删掉了大半个类和 `getByPath`，测试「失败」其实根本没编译过。改法：锚点用方法签名那么长的唯一串，并在跑测试之前先跑一次 `flutter analyze`，有 error 就判「变异无效」，不算验证结果。
-- 另外，把「事务包裹」和「加 ORDER BY」这类改动的区分力也要如实记账：`FolderDao.delete`、`setWorkMany` 的事务，以及 `ensureByPath` 里的 ORDER BY，都构造不出能区分旧实现的用例（要区分「逐条 commit」和「一个事务」得让第二个文件夹失败，而 `work_id` 指向不存在的作品时第一条就失败；同一个路径本不该有两条映射，构造不出 ORDER BY 生效的状态）。这几处，加上第 21 项 `_writeAtomic` 的原子性（只有写到一半进程挂掉时才可观察，进程内只能验「没有 .tmp 残留」和内容完整，旧实现也过）与第 24 项的分批（本机 SQLite 变量上限 32766，构造不出让旧实现抛 `too many SQL variables` 的用例），加上第 25 项的 `lastModifiedSync()` → `await file.lastModified()`（两版读到的值一样，差别只在同步版会占调用方 isolate 做一次文件 IO），都写进了报告的「没有区分用例的改动」。
 - 教训六：补用例会把报告写错的地方暴露出来。第 23 项原写「根目录 `/` 或 `C:\` 被削成空串，直属文件全被排除」，实测只有 `C:\` 真的坏：`_directPrefix` 先剥尾部分隔符，`C:\` 剥成 `C:` 后 `base.contains('\\')` 为假、退回 `/`，生成的 `C:/%` 谁都匹配不上；`/` 反而是对的。同类坑：`test/track_query_test.dart` 的 `add` 辅助原来用 `p.basename(path)` 生成文件名，Linux 上 `p.basename('C:\\a.mp3')` 返回整串，断言对不上，Windows 路径用例必须显式给文件名。
 - 教训七：把工作搬到别的 isolate，不能靠「代码里写了 `compute`」验收，得断言它真的在别的 isolate 上跑。手法是在回调里写一个静态标志：静态变量按 isolate 隔离，代码跑在别的 isolate 时调用方再读还是 `false`，跑在自己身上就是 `true`。`MetadataService.readAll` 与 `FileScanner.scanDirectoryOffThread` 各有一个这样的标志，变异验证里把 `compute` 摘掉立刻被拦住。
-- 未做：报告第 1–27 项已全部处理；仍保留在「没有区分用例的改动」清单里的几处见上文与 `docs/code-review.md`。
+- 记账口径：`FolderDao.delete`、`setWorkMany` 的事务，以及 `ensureByPath` 里的 ORDER BY，都构造不出能区分旧实现的用例（要区分「逐条 commit」和「一个事务」得让第二个文件夹失败，而 `work_id` 指向不存在的作品时第一条就失败；同一个路径本不该有两条映射，构造不出 ORDER BY 生效的状态）。这几处，加上第 21 项 `_writeAtomic` 的原子性（只有写到一半进程挂掉时才可观察，进程内只能验「没有 .tmp 残留」和内容完整，旧实现也过）与第 24 项的分批（本机 SQLite 变量上限 32766，构造不出让旧实现抛 `too many SQL variables` 的用例），加上第 25 项的 `lastModifiedSync()` → `await file.lastModified()`（两版读到的值一样，差别只在同步版会占调用方 isolate 做一次文件 IO），都写进了报告的「没有区分用例的改动」。
+- 未做：无，报告 27 条全部处理。仍留在「没有区分用例的改动」清单里的几处见上一条；完整章节在本地工作稿 `docs/code-review.md`（不入库）。
 
 ## 跨平台差异与规避（踩坑速查）
 
