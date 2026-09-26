@@ -151,7 +151,15 @@ Future<void> _migrateDataDir(BuildContext context, AppState appState) async {
     content: '将把数据库、封面缓存、设置整体迁移到：\n$dir\n\n原目录会保留，不会删除。',
   );
   if (ok != true) return;
-  await appState.migrateDataDir(dir);
+  try {
+    await appState.migrateDataDir(dir);
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('迁移失败：$e')));
+    }
+    return;
+  }
   if (context.mounted) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('数据已迁移到：$dir')));

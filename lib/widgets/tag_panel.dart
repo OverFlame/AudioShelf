@@ -125,12 +125,21 @@ class _TagPanelState extends State<TagPanel> {
     );
   }
 
+  /// 导入失败时把原因弹出来。调用方是按钮回调，没有别的错误出口。
+  void _showImportError(AppState appState) {
+    final err = appState.importError;
+    if (err == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('导入失败：$err')));
+  }
+
   Future<void> _addFromPath(AppState appState) async {
     if (!await _ensureAllFilesAccess()) return;
     final text = _pathController.text.trim();
     if (text.isEmpty) return;
     _pathController.clear();
     await appState.importDirectory(text);
+    _showImportError(appState);
   }
 
   Future<void> _pickFolder(AppState appState) async {
@@ -138,6 +147,7 @@ class _TagPanelState extends State<TagPanel> {
     final result = await pickDirectoryPath(title: '选择包含音频的文件夹');
     if (result != null) {
       await appState.importDirectory(result);
+      _showImportError(appState);
     }
   }
 

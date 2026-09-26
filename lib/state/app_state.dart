@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../db/database.dart';
 import '../db/folder_dao.dart';
@@ -10,6 +12,7 @@ import '../db/track_dao.dart';
 import '../db/work_dao.dart';
 import '../services/cover_service.dart';
 import '../services/data_dir_service.dart';
+import '../services/file_scanner.dart';
 import '../services/import_service.dart';
 import '../services/settings_service.dart';
 import '../services/subtitle_parser.dart';
@@ -73,9 +76,12 @@ class AppState extends ChangeNotifier {
   List<Tag> _allTags = [];
   List<Tag> get allTags => _allTags;
   final Map<int, List<Tag>> _trackTags = {};
+  /// 每个曲目的标签切换排队串行执行，见 [toggleTagOnTrack]。
+  final Map<int, Future<void>> _tagToggleChains = {};
   // ── 曲目多选 ──
   final Set<int> _selectedTrackIds = {};
-  Set<int> get selectedTrackIds => _selectedTrackIds;
+  /// 只读视图：调用方拿不到内部集合，改不到选中状态。
+  Set<int> get selectedTrackIds => UnmodifiableSetView(_selectedTrackIds);
   int? _anchorTrackId;
   bool _selectionMode = false;
   bool get selectionMode => _selectionMode;
@@ -92,9 +98,23 @@ class AppState extends ChangeNotifier {
   double _importProgress = 0;
   double get importProgress => _importProgress;
 
+  /// 最近一次导入的失败原因；null 表示上次导入没有出错。
+  ///
+  /// 导入的调用方是按钮回调，没有错误边界，所以不往上抛异常；改成把这个字段
+  /// 交给界面，让失败可见，而不是只写一行日志当没事发生。
+  String? _importError;
+  String? get importError => _importError;
+
   // ── 最近播放 ──
   List<TrackItem> _recentTracks = [];
   List<TrackItem> get recentTracks => _recentTracks;
+  /// [loadRecentTracks] 的代际：快速切歌会并发触发多次重载，只有最后一次能写回。
+  int _recentLoadGeneration = 0;
+
+  // ── 播放队列来源作品的封面 ──
+  String? _playingWorkCover;
+  /// 当前播放队列来源作品的封面。队列建立时记录，与「当前浏览的作品」解耦。
+  String? get playingWorkCover => _playingWorkCover;
 
   // ── 封面缓存上限（MB，0 表示不限制）──
   int _coverCacheLimitMB = 512;
@@ -161,62 +181,94 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 刷新 / 中间栏加载 ═══════════════
 
+  /// 每次 refresh 递增。用于丢弃「先发起但后完成」的旧结果。
+  int _refreshGeneration = 0;
+
   Future<void> refresh() async {
-    logInfo('AppState', 'refresh()');
+    final gen = ++_refreshGeneration;
+    logInfo('AppState', 'refresh() gen=$gen');
     _subtitleCache.clear();
-    _works = await _workDao.listAll();
-    _unassignedFolders = await _folderDao.listUnassignedRoots();
+    final works = await _workDao.listAll();
+    final unassigned = await _folderDao.listUnassignedRoots();
+    if (gen != _refreshGeneration) {
+      logInfo('AppState', 'refresh() gen=$gen 已被新一代取代，丢弃结果');
+      return;
+    }
+    _works = works;
+    _unassignedFolders = unassigned;
     notifyListeners();
-    await _loadCenter();
+    await _loadCenter(gen);
   }
 
-  Future<void> _loadCenter() async {
+  /// 加载中间栏。[gen] 是发起时的 [refresh] 代际。
+  Future<void> _loadCenter(int gen) async {
     _loading = true;
     notifyListeners();
     try {
       final search = _searchQuery.trim();
       final filterActive = hasAdvancedFilter || _tagFilter.active;
 
+      List<VirtualFolder> folders;
+      List<TrackItem> tracks;
+
       if (search.isNotEmpty) {
-        _centerFolders = [];
+        folders = const [];
         var list = await _trackDao.searchByName(search);
         if (filterActive) {
           final ids = await _computeMatchingIds();
           list = list.where((t) => ids.contains(t.id)).toList();
         }
-        _tracks = _sortTracks(list);
+        tracks = list;
+      } else {
+        if (_currentWork != null && _currentFolderId != null) {
+          folders = await _folderDao.listChildren(_currentFolderId!);
+          tracks = _currentFolderPath == null
+              ? <TrackItem>[]
+              : await _trackDao.queryDirectInDir(_currentFolderPath!);
+        } else if (_currentWork != null) {
+          // 严格按文件夹树：作品层只显示入口子文件夹，不直接平铺曲目
+          folders = await _folderDao.listRootsByWork(_currentWork!.id!);
+          tracks = const [];
+        } else {
+          folders = const [];
+          tracks = const [];
+        }
+
+        if (filterActive) {
+          final ids = await _computeMatchingIds();
+          tracks = tracks.where((t) => ids.contains(t.id)).toList();
+          folders = await _filterFolders(folders, ids);
+        }
+      }
+
+      // 等待期间又有新的 refresh 发起，本次结果作废，不覆盖更新的状态。
+      if (gen != _refreshGeneration) {
+        logInfo('AppState', 'Center load gen=$gen 已被取代，丢弃结果');
         return;
       }
-
-      List<VirtualFolder> folders;
-      List<TrackItem> tracks;
-      if (_currentWork != null && _currentFolderId != null) {
-        folders = await _folderDao.listChildren(_currentFolderId!);
-        tracks = _currentFolderPath == null
-            ? <TrackItem>[]
-            : await _trackDao.queryDirectInDir(_currentFolderPath!);
-      } else if (_currentWork != null) {
-        // 严格按文件夹树：作品层只显示入口子文件夹，不直接平铺曲目
-        folders = await _folderDao.listRootsByWork(_currentWork!.id!);
-        tracks = const [];
-      } else {
-        folders = const [];
-        tracks = const [];
-      }
-
-      if (filterActive) {
-        final ids = await _computeMatchingIds();
-        tracks = tracks.where((t) => ids.contains(t.id)).toList();
-        folders = await _filterFolders(folders, ids);
-      }
-
       _centerFolders = _sortFolders(folders);
       _tracks = _sortTracks(tracks);
+      // 选中集合只保留当前可见的曲目。切到别的作品或文件夹之后，
+      // 「批量打标签」「移动」不会落到看不见的曲目上。
+      final visibleIds = _tracks.map((t) => t.id).whereType<int>().toSet();
+      final selectedBefore = _selectedTrackIds.length;
+      _selectedTrackIds.retainAll(visibleIds);
+      if (_anchorTrackId != null && !visibleIds.contains(_anchorTrackId)) {
+        _anchorTrackId = null;
+      }
+      if (_selectedTrackIds.isEmpty) _selectionMode = false;
+      if (selectedBefore != _selectedTrackIds.length) {
+        logInfo('AppState',
+            '选中集合随上下文收窄: $selectedBefore -> ${_selectedTrackIds.length}');
+      }
       logInfo('AppState',
           'Center loaded: ${_centerFolders.length} folders, ${_tracks.length} tracks');
     } finally {
-      _loading = false;
-      notifyListeners();
+      // 只有最新一代有资格清 loading，否则会提前关掉新一轮的转圈。
+      if (gen == _refreshGeneration) {
+        _loading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -426,7 +478,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteWork(int id) async {
-    await _workDao.detachFolders(id);
+    // WorkDao.delete 内部用事务完成「摘归属 + 删作品」。
     await _workDao.delete(id);
     if (_currentWork?.id == id) {
       await goHome();
@@ -457,7 +509,12 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteFolder(int id) async {
+    // 先记下这个文件夹自己挂在哪几条路径上：删完之后 folder_paths 会被 CASCADE 清掉，
+    // 再想问「哪些曲目本来是靠它才可见的」就没有依据了。
+    final removedPaths =
+        (await _folderDao.getPaths(id)).map((fp) => fp.path).toList();
     await _folderDao.delete(id);
+    await _pruneTracksLeftBehind(removedPaths);
     _folderVersion++;
     if (_currentFolderId == id) {
       _currentFolderId = null;
@@ -467,12 +524,44 @@ class AppState extends ChangeNotifier {
     await refresh();
   }
 
+  /// 删除文件夹后，把「落在被删路径下、又不再被任何文件夹覆盖」的曲目从曲库移除。
+  ///
+  /// 曲目行只通过 folder_paths 里的路径前缀可见。留下这些孤儿行会同时坏两件事：
+  /// 搜索能搜到但树里进不去；同一个目录再导入会被「全部已入库」挡掉，
+  /// 于是那个目录永远挂不回来。
+  ///
+  /// 返回实际删除的曲目行数。
+  Future<int> _pruneTracksLeftBehind(List<String> removedPaths) async {
+    if (removedPaths.isEmpty) return 0;
+
+    final alive = <String>[];
+    for (final list in (await _folderDao.getAllPaths()).values) {
+      for (final fp in list) {
+        alive.add(fp.path);
+      }
+    }
+
+    final orphan = <String>[];
+    for (final track in await _trackDao.queryAll()) {
+      final wasInside = removedPaths.any((r) => p.isWithin(r, track.path));
+      if (!wasInside) continue;
+      // 还有别的文件夹挂着它的上级目录，就留着。
+      if (alive.any((a) => p.isWithin(a, track.path))) continue;
+      orphan.add(track.path);
+    }
+    if (orphan.isEmpty) return 0;
+
+    final deleted = await _trackDao.deleteByPaths(orphan);
+    _trackTags.clear();
+    logInfo('AppState',
+        '删除文件夹后清理失联曲目 ${orphan.length} 条（实删 $deleted 行）');
+    return deleted;
+  }
+
   /// 把文件夹（及其后代）移动到另一作品
   Future<void> moveFolderToWork(int folderId, int? workId) async {
     final ids = await _folderDao.collectDescendants(folderId);
-    for (final id in ids) {
-      await _folderDao.setWork(id, workId);
-    }
+    await _folderDao.setWorkMany(ids, workId);
     _folderVersion++;
     await refresh();
   }
@@ -481,39 +570,102 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 导入 ═══════════════
 
-  /// 导入目录（自动创建同名作品）
+  /// 导入目录（自动创建同名作品）。
+  ///
+  /// 返回 null 表示没有导入：已有别的导入在跑，或者目录里没有新的音频。
+  /// 目录内没有音频时不建作品，避免留下空作品。
   Future<Work?> importDirectory(String dirPath) async {
-    final name = _baseName(dirPath);
-    final work = await _workDao.create(name);
-    await _runImport(dirPath, work.id!);
-    return work;
+    if (!_beginImport('importDirectory')) return null;
+    try {
+      final scan = await FileScanner.scanDirectory(dirPath);
+      if (scan.audioPaths.isEmpty) {
+        logWarn('AppState', '目录内无音频，未创建作品: $dirPath');
+        return null;
+      }
+      if (!await _hasNewAudio(scan)) {
+        logWarn('AppState', '目录内音频均已导入，未创建作品: $dirPath');
+        return null;
+      }
+
+      final work = await _workDao.create(_baseName(dirPath));
+      final imported = await _runImport(dirPath, work.id!, scan: scan);
+      if (imported == 0) {
+        // 一条都没落库就删掉刚建的作品：可能是并发插入被 UNIQUE 忽略，
+        // 也可能是这次导入直接失败（建树失败时曲目还没开始写，所以也是 0）。
+        // 失败原因留在 _importError 里给界面显示。
+        final why = _importError ?? '没有新曲目落库';
+        logWarn('AppState', '导入没有落库（$why），删除空作品: ${work.name}');
+        await _workDao.delete(work.id!);
+        return null;
+      }
+      return work;
+    } finally {
+      _endImport();
+    }
   }
 
   /// 导入目录到指定作品（合并）
   Future<void> importDirectoryIntoWork(String dirPath, int workId) async {
-    await _runImport(dirPath, workId);
+    if (!_beginImport('importDirectoryIntoWork')) return;
+    try {
+      await _runImport(dirPath, workId);
+    } finally {
+      _endImport();
+    }
   }
 
-  Future<void> _runImport(String dirPath, int workId) async {
+  /// 是否至少有一首曲目还没入库。
+  Future<bool> _hasNewAudio(ScanResult scan) async {
+    final existing = await _trackDao.existingPaths(scan.audioPaths);
+    return existing.length < scan.audioPaths.length;
+  }
+
+  /// 同步置位导入标志，返回 false 表示本次请求被拒。
+  ///
+  /// 标志必须在第一个 await 之前置上：两次导入同时进来时，第二次要在这里就被挡住，
+  /// 不能等 `_runImport` 里再判断。
+  bool _beginImport(String caller) {
+    if (_importing) {
+      logWarn('AppState', '$caller: 已有导入进行中，忽略本次请求');
+      return false;
+    }
     _importing = true;
     _importProgress = 0;
+    _importError = null;
     notifyListeners();
+    return true;
+  }
+
+  void _endImport() {
+    _importing = false;
+    _importProgress = 0;
+    notifyListeners();
+  }
+
+  /// 真正干活的部分。调用方负责用 [_beginImport] / [_endImport] 圈住导入期。
+  /// 返回处理过的新曲目数，0 表示这次导入没有新增内容。
+  Future<int> _runImport(String dirPath, int workId, {ScanResult? scan}) async {
+    var imported = 0;
     try {
       final importService = ImportService.fromDB();
-      await for (final p in importService.importDirectory(dirPath, workId: workId)) {
+      final stream =
+          importService.importDirectory(dirPath, workId: workId, scan: scan);
+      await for (final p in stream) {
+        imported++;
         _importProgress = p.percent;
         notifyListeners();
       }
     } catch (e) {
+      _importError = e.toString();
       logError('AppState', '导入失败', e.toString());
     } finally {
-      _importing = false;
       _importProgress = 0;
       notifyListeners();
       _folderVersion++;
       await refresh();
       await enforceCoverCacheLimit();
     }
+    return imported;
   }
 
   String _baseName(String path) {
@@ -530,14 +682,35 @@ class AppState extends ChangeNotifier {
   }
 
   Future<List<Tag>> getTrackTags(int trackId) async {
-    if (_trackTags.containsKey(trackId)) return _trackTags[trackId]!;
+    final cached = _trackTags[trackId];
+    if (cached != null) return List<Tag>.unmodifiable(cached);
     final tags = await _tagDao.getTagsForTrack(trackId);
-    _trackTags[trackId] = tags;
-    return tags;
+    _trackTags[trackId] = List<Tag>.of(tags);
+    return List<Tag>.unmodifiable(_trackTags[trackId]!);
   }
 
-  Future<void> toggleTagOnTrack(int trackId, Tag tag) async {
-    final current = _trackTags[trackId] ?? await _tagDao.getTagsForTrack(trackId);
+  /// 切换曲目标签。同一曲目的多次调用按顺序串行执行。
+  ///
+  /// 连点两次同一个标签时，第二次必须在第一次写库并更新缓存之后才读当前状态；
+  /// 否则两次都读到「未打标签」，双击「关标签」会变成打开。
+  Future<void> toggleTagOnTrack(int trackId, Tag tag) {
+    final previous = _tagToggleChains[trackId] ?? Future<void>.value();
+    final chain = previous.then((_) => _applyTagToggle(trackId, tag));
+    // 链尾只保留不会失败的 future：前一次出错不能卡住后面的点击。
+    final tail = chain.catchError((Object _) {});
+    _tagToggleChains[trackId] = tail;
+    unawaited(tail.whenComplete(() {
+      if (identical(_tagToggleChains[trackId], tail)) {
+        _tagToggleChains.remove(trackId);
+      }
+    }));
+    return chain;
+  }
+
+  Future<void> _applyTagToggle(int trackId, Tag tag) async {
+    // 改副本，缓存里的 List 不被就地修改；调用方拿到的也是不可变视图。
+    final current = List<Tag>.of(
+        _trackTags[trackId] ?? await _tagDao.getTagsForTrack(trackId));
     final has = current.any((t) => t.id == tag.id);
     if (has) {
       await _tagDao.removeTagFromTrack(trackId, tag.id!);
@@ -562,11 +735,7 @@ class AppState extends ChangeNotifier {
     }
     if (recursive) {
       final trackIds = await _collectFolderTrackIds(folderId);
-      for (final tag in tags) {
-        for (final tid in trackIds) {
-          await _tagDao.addTagToTrack(tid, tag.id!);
-        }
-      }
+      await _tagDao.addTagsToTracks(trackIds, tags.map((t) => t.id!));
     }
     _folderVersion++;
     notifyListeners();
@@ -576,11 +745,7 @@ class AppState extends ChangeNotifier {
       {bool recursive = false}) async {
     if (recursive) {
       final trackIds = await _collectFolderTrackIds(folderId);
-      for (final tag in tags) {
-        for (final tid in trackIds) {
-          await _tagDao.removeTagFromTrack(tid, tag.id!);
-        }
-      }
+      await _tagDao.removeTagsFromTracks(trackIds, tags.map((t) => t.id!));
     }
     for (final tag in tags) {
       await _tagDao.removeTagFromFolder(folderId, tag.id!);
@@ -692,22 +857,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addTagsToTracks(Iterable<int> trackIds, List<Tag> tags) async {
-    for (final id in trackIds) {
-      for (final tag in tags) {
-        await _tagDao.addTagToTrack(id, tag.id!);
-      }
-    }
+    await _tagDao.addTagsToTracks(trackIds, tags.map((t) => t.id!));
     _trackTags.clear();
     notifyListeners();
   }
 
   Future<void> removeTagsFromTracks(
       Iterable<int> trackIds, List<Tag> tags) async {
-    for (final id in trackIds) {
-      for (final tag in tags) {
-        await _tagDao.removeTagFromTrack(id, tag.id!);
-      }
-    }
+    await _tagDao.removeTagsFromTracks(trackIds, tags.map((t) => t.id!));
     _trackTags.clear();
     notifyListeners();
   }
@@ -799,16 +956,19 @@ class AppState extends ChangeNotifier {
 
   /// 播放当前列表从 [startIndex] 开始
   Future<void> playTracks(List<TrackItem> list, int startIndex) async {
+    _rememberQueueCover();
     await player.playQueue(list, startIndex: startIndex);
   }
 
   Future<void> playAllCurrent() async {
     if (_tracks.isEmpty) return;
+    _rememberQueueCover();
     await player.playQueue(_tracks, startIndex: 0);
   }
 
   Future<void> playTrackAt(int index) async {
     if (index < 0 || index >= _tracks.length) return;
+    _rememberQueueCover();
     await player.playQueue(_tracks, startIndex: index);
   }
 
@@ -842,9 +1002,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 当前曲目封面：优先作品封面，否则曲目内嵌封面
+  /// 当前曲目封面：优先队列来源作品的封面，否则曲目内嵌封面。
+  ///
+  /// 用播放队列建立时记下的作品封面，而不是「当前浏览的作品」，
+  /// 播放中切换浏览对象不会把播放栏与通知栏的封面换掉。
   String? coverForTrack(TrackItem track) {
-    final wc = _currentWork?.coverPath;
+    final wc = _playingWorkCover;
     if (wc != null && File(wc).existsSync()) return wc;
     if (track.coverPath != null && File(track.coverPath!).existsSync()) {
       return track.coverPath;
@@ -852,40 +1015,82 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
+  /// 记下这次播放队列对应的作品封面。
+  void _rememberQueueCover() {
+    final cover = _currentWork?.coverPath;
+    _playingWorkCover =
+        (cover != null && File(cover).existsSync()) ? cover : null;
+  }
+
+  /// 按当前浏览的作品记录播放队列来源封面。
+  ///
+  /// 播放入口在调 `player.playQueue` 之前都会先调它；测试里用它绕过原生播放器。
+  @visibleForTesting
+  void rememberQueueSource() => _rememberQueueCover();
+
   // ═══════════════ 数据目录 ═══════════════
 
   Future<String> getDataDir() => DataDirService.instance.dataDir;
 
+  bool _migrating = false;
+
   /// 迁移数据目录到 [newDir]：关闭数据库 → 复制数据 → 重开数据库 → 刷新。
+  ///
+  /// 同一时刻只允许一次迁移。中途失败时把数据库重开到「指针指向的目录」，
+  /// 不让应用停在「库已关闭」的状态。
   Future<void> migrateDataDir(String newDir) async {
+    if (_migrating) {
+      throw StateError('数据目录迁移已在进行中');
+    }
+    _migrating = true;
     final oldDir = await DataDirService.instance.dataDir;
-    await DatabaseManager.instance.close();
-    final newD = await DataDirService.instance.migrateTo(newDir);
-    await DatabaseManager.instance.init();
-    // 更新数据目录内的封面缓存路径前缀（covers/track_*.jpg、covers/work_*.jpg）
-    await _rewriteCoverPaths(oldDir, newD);
-    await loadSettings();
-    await loadTags();
-    await refresh();
-    logInfo('AppState', '数据目录迁移完成: $oldDir -> $newD');
+    try {
+      await DatabaseManager.instance.close();
+      final newD = await DataDirService.instance.migrateTo(newDir);
+      await DatabaseManager.instance.init();
+      // 更新数据目录内的封面缓存路径前缀（covers/track_*.jpg、covers/work_*.jpg）
+      await _rewriteCoverPaths(oldDir, newD);
+      await loadSettings();
+      await loadTags();
+      await refresh();
+      logInfo('AppState', '数据目录迁移完成: $oldDir -> $newD');
+    } catch (e, st) {
+      logError('AppState', '数据目录迁移失败: $e\n$st');
+      // migrateTo 成功则指针已指向新目录，失败则仍指向旧目录；两种情况都按指针
+      // 重开，避免数据库一直处于关闭状态。
+      if (!DatabaseManager.instance.isOpen) {
+        try {
+          await DatabaseManager.instance.init();
+        } catch (reopenErr) {
+          logError('AppState', '迁移失败后重开数据库也失败: $reopenErr');
+        }
+      }
+      rethrow;
+    } finally {
+      _migrating = false;
+    }
   }
 
   /// 把指向旧数据目录的封面路径改写为新数据目录（目录外的原图路径不动）
   Future<void> _rewriteCoverPaths(String oldDir, String newDir) async {
     final tracks = await _trackDao.queryAll();
     for (final t in tracks) {
-      final cp = t.coverPath;
-      if (cp != null && cp.startsWith(oldDir)) {
-        await _trackDao.setCoverPath(t.id!, newDir + cp.substring(oldDir.length));
-      }
+      final moved = _movedPath(t.coverPath, oldDir, newDir);
+      if (moved != null) await _trackDao.setCoverPath(t.id!, moved);
     }
     final works = await _workDao.listAll();
     for (final w in works) {
-      final cp = w.coverPath;
-      if (cp != null && cp.startsWith(oldDir)) {
-        await _workDao.setCover(w.id!, newDir + cp.substring(oldDir.length));
-      }
+      final moved = _movedPath(w.coverPath, oldDir, newDir);
+      if (moved != null) await _workDao.setCover(w.id!, moved);
     }
+  }
+
+  /// [path] 在 [oldDir] 之内时返回它在新目录下的对应路径，否则返回 null。
+  /// 用 p.isWithin 判断，避免 `/a/b` 误匹配 `/a/bc/...`。
+  String? _movedPath(String? path, String oldDir, String newDir) {
+    if (path == null) return null;
+    if (!p.isWithin(oldDir, path)) return null;
+    return p.join(newDir, p.relative(path, from: oldDir));
   }
 
   // ═══════════════ 最近播放 / 播放历史 ═══════════════
@@ -893,18 +1098,34 @@ class AppState extends ChangeNotifier {
   void _onTrackStarted(TrackItem track) {
     final id = track.id;
     if (id == null) return;
+    final gen = ++_recentLoadGeneration;
     unawaited(_trackDao
         .recordPlay(id, DateTime.now().millisecondsSinceEpoch)
-        .then((_) => loadRecentTracks()));
+        .then((_) => _reloadRecentTracks(gen))
+        .catchError((Object e) {
+      logError('AppState', 'recordPlay 失败: $e');
+    }));
   }
 
-  Future<void> loadRecentTracks() async {
-    _recentTracks = await _trackDao.recentPlayedTracks();
+  Future<void> loadRecentTracks() => _reloadRecentTracks(_recentLoadGeneration);
+
+  /// 只有最后一次触发的重载能写回结果。
+  ///
+  /// 快速切歌会并发触发多次 recordPlay 与多次重载，先发起的那次可能后完成。
+  Future<void> _reloadRecentTracks(int gen) async {
+    final list = await _trackDao.recentPlayedTracks();
+    if (gen != _recentLoadGeneration) {
+      logInfo('AppState', 'recent gen=$gen 已被取代，丢弃结果');
+      return;
+    }
+    _recentTracks = list;
     notifyListeners();
   }
 
   Future<void> playRecentTracks(int startIndex) async {
     if (_recentTracks.isEmpty) return;
+    // 最近播放跨作品，没有单一来源封面，回退到每首曲目自己的封面。
+    _playingWorkCover = null;
     await player.playQueue(_recentTracks, startIndex: startIndex);
   }
 

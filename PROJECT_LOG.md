@@ -79,6 +79,31 @@
     3. `_disposeCurrent()` 改为**先摘除字段再异步释放**，避免并发调用重复释放同一句柄/音源。
     4. `stop()` 自增代际，使进行中的加载失效，避免停止后又冒出声音。
 
+### 阶段七 · 代码质量审查与竞态修复
+
+- 审查：对 `lib/` 与 `test/` 做只读审查，产出 `docs/code-review.md`（27 条，P0 三条、P1 十七条、P2 七条 + 轻微项与死码清单）。审查重点是与阶段六同类的竞态、状态不一致与资源泄漏。
+- 环境：宿主无 Flutter/Dart SDK，先按 `docs/wsl-flutter-setup.md` 在 WSL 装好 Flutter 3.47.5 / Dart 3.13.4。国内镜像（`storage.flutter-io.cn`）实测约 70 MB/s，官方源约 0.43 MB/s。`flutter analyze` 基线 6 条 info，`flutter test` 基线 15/15。
+- 修复节奏：按报告里的「建议修复顺序」分轮推进，每轮都跑 `flutter analyze` + `flutter test`，并对新增用例做**变异验证**（改坏实现必须让用例失败，否则该用例没有区分力）。
+
+| 轮次 | 修的条目 | 关键改动 |
+| --- | --- | --- |
+| 一 | 1、2、3 | 删作品改单事务 + `folders.work_id` 加 `ON DELETE SET NULL`（`migrations[3]` 重建表）；`DataDirService.migrateTo` 改成先复制校验、最后写指针，并复制 `-wal`；`migrateDataDir` 加互斥与失败重开库 |
+| 二 | 4、5 | `refresh()` / `_loadCenter` 加 `_refreshGeneration` 代际，`finally` 只让最新一代清 `_loading`；`tables` 升 v4，给 `folder_paths` 加 `(folder_id, path)` 唯一索引并先去重 |
+| 三 | 9、10、11、12、13 | `toggleTagOnTrack` 按曲目串行排队（`_tagToggleChains`）+ 标签列表一律 `List.of` / `unmodifiable`；`coverForTrack` 改用队列建立时记下的 `_playingWorkCover`，通知去重键追加封面；`_onTrackStarted` 的最近播放重载加代际；`_loadCenter` 写完 `_tracks` 后收窄选中集合 |
+| 四 | 6 | `SettingsService._save` 按 `_saveChain` 串行排队，写文件改为「写 `settings.json.tmp`（`flush: true`）再改名」；`init()` 补 `_data = {}` |
+| 五 | 7、8 | `AppState` 新增 `_beginImport` / `_endImport`，两个导入入口在第一个 `await` 之前同步置位标志，重复请求记 `logWarn` 后返回；`ImportService._isImporting` 改 `static`；「添加文件夹」按钮按 `appState.importing` 禁用；`importDirectory` 改为先扫描再建作品，无音频或全是旧曲目就不建，建完若 0 条落库则删除作品 |
+| 六 | 16、19、20 | `FolderDao.getByPath` 加 `ORDER BY f.id`，`delete` 两条语句包进一个事务，新增 `setWorkMany`；`TagDao` 新增 `addTagsToTracks` / `removeTagsFromTracks`（各自一个事务）；`AppState.deleteFolder` 删除后调 `_pruneTracksLeftBehind`，用 `TrackDao.deleteByPaths` 清掉「在被删路径下、又无存活文件夹覆盖」的曲目；`moveFolderToWork` 等五处批量写改走新方法；删除确认文案改成说明曲目会移出曲库 |
+| 七 | 17、18 | 新增 `FolderDao.ensureByPath`（「查映射、建文件夹、挂路径、对齐 parent/work」全在一个事务里），`_mirrorFolderTree` 只调它；整棵目录树的镜像提到曲目循环**之前**，建树失败时一条曲目都不写；`AppState` 新增 `importError`（`_beginImport` 清空、`_runImport` 的 catch 写入，仍不 rethrow），`folder_browser` 与 `tag_panel` 的三处导入调用后按它弹 SnackBar |
+
+- 测试从 15 例增到 48 例（`test/db_migration_test.dart`、`test/data_dir_migration_test.dart`、`test/app_state_refresh_test.dart`、`test/app_state_race_test.dart`、`test/settings_service_test.dart`、`test/import_guard_test.dart`、`test/import_atomic_test.dart`、`test/db_consistency_test.dart`），`flutter analyze` 始终只有那 6 条 info、0 error。
+- 教训一：并发刷新的「结果内容」断言没有区分力。`_loadCenter` 是在 `refresh()` 的两个 `await` 之后才读 `_searchQuery`，且 `sqflite_common_ffi` 的查询走 FIFO 串行队列，旧代码最后写入的仍是正确结果。改成断言 `notifyListeners` 次数（旧实现 20 次刷新重建 60 次，新实现常数级）才有区分力。
+- 教训二：设置保存的「文件内容」断言同样没有区分力。`jsonEncode(_data)` 在写的那一刻才求值，两次并发保存编码出的都是最终状态，字节完全相同，交错也看不出坏。改用 POSIX 硬链接区分「改名」与「就地截断」：保存前把旧 inode 挂一个硬链接，保存后该链接必须仍读到旧内容。串行链也顺带被证成必需品——去掉后两个并发保存共用同一个 `settings.json.tmp`，第二个 `rename` 直接 `PathNotFoundException`。
+- 教训三：导入守卫有三处（AppState 入口的拒绝分支、`ImportService` 的静态标志、事后删空作品），互为冗余。变异验证时单独去掉任一处，5 个用例仍全绿——是另一处接的手（第二次导入拿到 0 条事件 → 事后兜底把刚建的作品删掉）。测试断言的是「最终只有一个作品」这个行为，不是某一处代码；要证明每处都必需，得两处一起改。
+- 教训四：删文件夹留下的孤儿曲目有个更硬的后遗症。曲目只在 `folder_paths` 的路径前缀下可见，孤儿行既搜得到、树里又进不去，而且会让那个目录再导入时被第 8 项的「全部已入库」判为无新内容——目录从此挂不回来。所以「删文件夹」必须顺手清理，不能留给用户手动收拾。
+- 教训五：变异脚本的替换锚点必须唯一，否则「拦住了」是编译失败的假信号。第一版脚本用 `return _db.transaction((txn) async {` 当锚点，`folder_dao.dart` 里 `delete` 与 `ensureByPath` 都匹配，切片删掉了大半个类和 `getByPath`，测试「失败」其实根本没编译过。改法：锚点用方法签名那么长的唯一串，并在跑测试之前先跑一次 `flutter analyze`，有 error 就判「变异无效」，不算验证结果。
+- 另外，把「事务包裹」和「加 ORDER BY」这类改动的区分力也要如实记账：`FolderDao.delete`、`setWorkMany` 的事务，以及 `ensureByPath` 里的 ORDER BY，都构造不出能区分旧实现的用例（要区分「逐条 commit」和「一个事务」得让第二个文件夹失败，而 `work_id` 指向不存在的作品时第一条就失败；同一个路径本不该有两条映射，构造不出 ORDER BY 生效的状态）。这三处已写进报告的「没有区分用例的改动」。
+- 未做：报告第 21–27 项。
+
 ## 跨平台差异与规避（踩坑速查）
 
 | 问题 | 现象 | 规避 |

@@ -116,9 +116,10 @@ class MediaBridge {
 
     _startService();
 
-    // 仅当标题/播放态/时长/进度秒数变化时才更新通知（避免每 250ms 都调用原生）
+    // 仅当标题/播放态/时长/进度秒数/封面变化时才更新通知（避免每 250ms 都调用原生）
+    final cover = _appState?.coverForTrack(track);
     final key =
-        '${track.path}|${player.playing}|${player.duration.inMilliseconds}|${player.position.inSeconds}';
+        '${track.path}|${player.playing}|${player.duration.inMilliseconds}|${player.position.inSeconds}|$cover';
     if (key != _lastKey) {
       _lastKey = key;
       _updateNotification();

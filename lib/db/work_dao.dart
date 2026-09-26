@@ -80,16 +80,17 @@ class WorkDao {
         where: 'id = ?', whereArgs: [id]);
   }
 
-  /// 删除作品（仅删记录；其下文件夹的 work_id 置空由上层处理）
+  /// 删除作品，并在同一事务内摘掉其下文件夹的归属。
+  ///
+  /// 两步必须原子：只摘归属不删作品会留下空作品，只删作品不摘归属会留下指向
+  /// 已删作品的悬空引用（外键开启时直接抛错）。事务保证要么都成，要么都不成。
   Future<int> delete(int id) async {
-    final count = await _db.delete('works', where: 'id = ?', whereArgs: [id]);
-    logInfo('WorkDao', 'Deleted work id=$id (affected $count row(s))');
-    return count;
-  }
-
-  /// 将某作品下的所有文件夹 work_id 置空
-  Future<int> detachFolders(int workId) async {
-    return _db.update('folders', {'work_id': null},
-        where: 'work_id = ?', whereArgs: [workId]);
+    return _db.transaction((txn) async {
+      await txn.update('folders', {'work_id': null},
+          where: 'work_id = ?', whereArgs: [id]);
+      final count = await txn.delete('works', where: 'id = ?', whereArgs: [id]);
+      logInfo('WorkDao', 'Deleted work id=$id (affected $count row(s))');
+      return count;
+    });
   }
 }

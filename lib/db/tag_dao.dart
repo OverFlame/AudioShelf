@@ -142,6 +142,43 @@ class TagDao {
     });
   }
 
+  /// 一次事务里给多条曲目打同一批标签。
+  ///
+  /// 逐条 await 的写法在 N×M 次提交之外还有更硬的问题：中途一条失败，
+  /// 前面已经写进库的关联留下半截状态。放进事务后要么全成、要么全不成。
+  Future<void> addTagsToTracks(
+      Iterable<int> trackIds, Iterable<int> tagIds) async {
+    final tids = trackIds.toList();
+    final gids = tagIds.toList();
+    if (tids.isEmpty || gids.isEmpty) return;
+    await _db.transaction((txn) async {
+      for (final trackId in tids) {
+        for (final tagId in gids) {
+          await txn.insert('track_tags',
+              {'track_id': trackId, 'tag_id': tagId},
+              conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+    });
+  }
+
+  /// 一次事务里摘掉多条曲目上的同一批标签，与 [addTagsToTracks] 对称。
+  Future<void> removeTagsFromTracks(
+      Iterable<int> trackIds, Iterable<int> tagIds) async {
+    final tids = trackIds.toList();
+    final gids = tagIds.toList();
+    if (tids.isEmpty || gids.isEmpty) return;
+    await _db.transaction((txn) async {
+      for (final trackId in tids) {
+        for (final tagId in gids) {
+          await txn.delete('track_tags',
+              where: 'track_id = ? AND tag_id = ?',
+              whereArgs: [trackId, tagId]);
+        }
+      }
+    });
+  }
+
   Future<List<Tag>> getTagsForTrack(int trackId) async {
     final rows = await _db.rawQuery('''
       SELECT t.* FROM tags t
