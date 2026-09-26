@@ -158,12 +158,16 @@ class TrackDao {
   Future<List<TrackItem>> queryDirectInDir(String dirPath,
       {String? search, String orderBy = 'filename'}) async {
     final (prefix, sep) = _directPrefix(dirPath);
-    final conditions = <String>['path LIKE ?', 'path NOT LIKE ?'];
-    final args = <dynamic>['$prefix%', '$prefix%$sep%'];
+    final head = _escapeLike(prefix);
+    final conditions = <String>[
+      "path LIKE ? ESCAPE '\\'",
+      "path NOT LIKE ? ESCAPE '\\'",
+    ];
+    final args = <dynamic>['$head%', '$head%${_escapeLike(sep)}%'];
     if (search != null && search.isNotEmpty) {
-      conditions.add('(filename LIKE ? OR title LIKE ?)');
-      args.add('%$search%');
-      args.add('%$search%');
+      conditions.add("(filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')");
+      args.add('%${_escapeLike(search)}%');
+      args.add('%${_escapeLike(search)}%');
     }
     final rows = await _db.query(
       'tracks',
@@ -175,22 +179,40 @@ class TrackDao {
   }
 
   /// 匹配多个路径前缀中的曲目（用于作品/文件夹递归）
+  ///
+  /// 目录数可能上千，占位符数量在 SQLite 里有上限，所以按
+  /// [_queryBatchSize] 分批查，再按 id 去重（目录互相包含时会重复命中）。
   Future<List<TrackItem>> queryByDirs(List<String> dirPaths,
       {String orderBy = 'filename'}) async {
     if (dirPaths.isEmpty) return [];
-    final conditions = dirPaths.map((_) => 'path LIKE ?').join(' OR ');
-    final args = dirPaths.map((p) => '$p%').toList();
-    final rows = await _db.query('tracks',
-        where: conditions, whereArgs: args, orderBy: orderBy);
-    return rows.map(TrackItem.fromMap).toList();
+    final out = <TrackItem>[];
+    final seen = <int>{};
+    for (int i = 0; i < dirPaths.length; i += _queryBatchSize) {
+      final end = i + _queryBatchSize > dirPaths.length
+          ? dirPaths.length
+          : i + _queryBatchSize;
+      final batch = dirPaths.sublist(i, end);
+      final conditions =
+          batch.map((_) => "path LIKE ? ESCAPE '\\'").join(' OR ');
+      final args = batch.map((p) => '${_escapeLike(p)}%').toList();
+      final rows = await _db.query('tracks',
+          where: conditions, whereArgs: args, orderBy: orderBy);
+      for (final item in rows.map(TrackItem.fromMap)) {
+        if (item.id == null || seen.add(item.id!)) out.add(item);
+      }
+    }
+    if (dirPaths.length > _queryBatchSize) _sortBy(orderBy, out);
+    return out;
   }
 
   /// 按文件名/标题/艺术家模糊搜索
   Future<List<TrackItem>> searchByName(String q, {int limit = 100000}) async {
+    final like = '%${_escapeLike(q)}%';
     final rows = await _db.query(
       'tracks',
-      where: 'filename LIKE ? OR title LIKE ? OR artist LIKE ? OR album LIKE ?',
-      whereArgs: ['%$q%', '%$q%', '%$q%', '%$q%'],
+      where: "filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' "
+          "OR artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\'",
+      whereArgs: [like, like, like, like],
       orderBy: 'filename',
       limit: limit,
     );
@@ -200,23 +222,43 @@ class TrackDao {
   /// 查询一批曲目 id 对应的路径
   Future<List<String>> pathsByIds(Set<int> ids) async {
     if (ids.isEmpty) return [];
-    final placeholders = ids.map((_) => '?').join(',');
-    final rows = await _db.query('tracks',
-        columns: ['path'],
-        where: 'id IN ($placeholders)',
-        whereArgs: ids.toList());
-    return rows.map((r) => r['path'] as String).toList();
+    final list = ids.toList();
+    final out = <String>[];
+    for (int i = 0; i < list.length; i += _queryBatchSize) {
+      final end = i + _queryBatchSize > list.length
+          ? list.length
+          : i + _queryBatchSize;
+      final batch = list.sublist(i, end);
+      final placeholders = batch.map((_) => '?').join(',');
+      final rows = await _db.query('tracks',
+          columns: ['path'],
+          where: 'id IN ($placeholders)',
+          whereArgs: batch,
+          orderBy: 'id');
+      out.addAll(rows.map((r) => r['path'] as String));
+    }
+    return out;
   }
 
   Future<List<TrackItem>> queryByIds(Set<int> ids,
       {String orderBy = 'filename'}) async {
     if (ids.isEmpty) return [];
-    final placeholders = ids.map((_) => '?').join(',');
-    final rows = await _db.query('tracks',
-        where: 'id IN ($placeholders)',
-        whereArgs: ids.toList(),
-        orderBy: orderBy);
-    return rows.map(TrackItem.fromMap).toList();
+    final list = ids.toList();
+    final out = <TrackItem>[];
+    for (int i = 0; i < list.length; i += _queryBatchSize) {
+      final end = i + _queryBatchSize > list.length
+          ? list.length
+          : i + _queryBatchSize;
+      final batch = list.sublist(i, end);
+      final placeholders = batch.map((_) => '?').join(',');
+      final rows = await _db.query('tracks',
+          where: 'id IN ($placeholders)',
+          whereArgs: batch,
+          orderBy: orderBy);
+      out.addAll(rows.map(TrackItem.fromMap));
+    }
+    if (list.length > _queryBatchSize) _sortBy(orderBy, out);
+    return out;
   }
 
   Future<List<TrackItem>> queryAll({String orderBy = 'filename'}) async {
@@ -241,14 +283,16 @@ class TrackDao {
 
   // ═══ 播放历史 ═══
 
-  /// 记录一次播放（插入历史）
+  /// 记录一次播放（插入历史后裁剪，同一个事务）
   Future<void> recordPlay(int trackId, int playedAt) async {
-    await _db.insert('play_history',
-        {'track_id': trackId, 'played_at': playedAt});
-    // 仅保留最近 200 条，避免无限增长
-    await _db.rawDelete(
-        'DELETE FROM play_history WHERE id NOT IN '
-        '(SELECT id FROM play_history ORDER BY played_at DESC LIMIT 200)');
+    await _db.transaction((txn) async {
+      await txn.insert('play_history',
+          {'track_id': trackId, 'played_at': playedAt});
+      // 仅保留最近 200 条，避免无限增长
+      await txn.rawDelete(
+          'DELETE FROM play_history WHERE id NOT IN '
+          '(SELECT id FROM play_history ORDER BY played_at DESC LIMIT 200)');
+    });
   }
 
   /// 最近播放的曲目（按最后播放时间倒序，去重）
@@ -264,13 +308,43 @@ class TrackDao {
     return rows.map(TrackItem.fromMap).toList();
   }
 
+  /// 一条 SQL 里的最大占位符数量，超过就分批查
+  static const int _queryBatchSize = 500;
+
+  /// 转义 LIKE 通配符，配合 `ESCAPE '\'` 使用。
+  ///
+  /// 不转义时搜索 `%` 会命中全部曲目，`_` 会命中任意单字符；目录名里的
+  /// `_` 还会让「本目录直属曲目」的边界判断失效。
+  static String _escapeLike(String raw) => raw
+      .replaceAll('\\', '\\\\')
+      .replaceAll('%', '\\%')
+      .replaceAll('_', '\\_');
+
+  /// 分批查询后按同一列重排；单批时顺序仍由 SQLite 决定
+  static void _sortBy(String orderBy, List<TrackItem> items) {
+    final col = orderBy.trim().split(' ').first.toLowerCase();
+    int cmp(TrackItem a, TrackItem b) => switch (col) {
+          'title' => (a.title ?? '').compareTo(b.title ?? ''),
+          'artist' => (a.artist ?? '').compareTo(b.artist ?? ''),
+          'album' => (a.album ?? '').compareTo(b.album ?? ''),
+          'id' => (a.id ?? 0).compareTo(b.id ?? 0),
+          'path' => a.path.compareTo(b.path),
+          'added_at' => a.addedAt.compareTo(b.addedAt),
+          _ => a.filename.toLowerCase().compareTo(b.filename.toLowerCase()),
+        };
+    final desc = orderBy.toUpperCase().contains('DESC');
+    items.sort((a, b) => desc ? -cmp(a, b) : cmp(a, b));
+  }
+
   /// 归一化目录路径，返回 (带分隔符的前缀, 分隔符)
   static (String, String) _directPrefix(String dirPath) {
+    // 分隔符必须在剥掉尾部分隔符之前判断：`C:\` 剥成 `C:` 后再判断会误判成 `/`，
+    // 生成的 `C:/%` 匹配不到任何 Windows 路径。`C:` 这种盘符根也按 `\` 处理。
+    final sep = (dirPath.contains('\\') || dirPath.endsWith(':')) ? '\\' : '/';
     var base = dirPath;
-    if (base.endsWith('\\') || base.endsWith('/')) {
+    while (base.endsWith('\\') || base.endsWith('/')) {
       base = base.substring(0, base.length - 1);
     }
-    final sep = base.contains('\\') ? '\\' : '/';
     return ('$base$sep', sep);
   }
 }

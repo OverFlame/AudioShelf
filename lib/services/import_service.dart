@@ -64,7 +64,7 @@ class ImportService {
     if (_isImporting) return;
     _isImporting = true;
     try {
-      final scanned = scan ?? await FileScanner.scanDirectory(dirPath);
+      final scanned = scan ?? await FileScanner.scanDirectoryOffThread(dirPath);
       if (scanned.audioPaths.isEmpty) {
         logInfo('Import', 'importDirectory: 目录内无音频 "$dirPath"');
         return;
@@ -83,46 +83,58 @@ class ImportService {
       // 曲目搜得到、树里进不去，而且调用方看到的是「导入完成」。
       await _mirrorFolderTree(dirPath, scanned.audioPaths, workId);
 
-      for (int i = 0; i < newPaths.length; i++) {
-        final path = newPaths[i];
-        final file = File(path);
+      // 元数据解析整批丢到单独 isolate，主 isolate 只做落库和进度（报告第 25 项）。
+      //
+      // 分批还能把内嵌封面的内存占用压在几十张图以内，别一次读几千首。
+      const batchSize = 32;
+      for (int start = 0; start < newPaths.length; start += batchSize) {
+        final end = start + batchSize < newPaths.length
+            ? start + batchSize
+            : newPaths.length;
+        final metas = await MetadataService.readAll(newPaths.sublist(start, end));
 
-        int sizeBytes = 0;
-        try {
-          sizeBytes = await file.length();
-        } catch (_) {}
-        int mtime = 0;
-        try {
-          mtime = file.lastModifiedSync().millisecondsSinceEpoch;
-        } catch (_) {}
+        for (int i = start; i < end; i++) {
+          final path = newPaths[i];
+          final file = File(path);
+          final meta = metas[i - start];
 
-        final ext = p.extension(path).toLowerCase();
-        final filename = p.basename(path);
-        final now = DateTime.now().millisecondsSinceEpoch;
-        final meta = MetadataService.read(path);
+          int sizeBytes = 0;
+          try {
+            sizeBytes = await file.length();
+          } catch (_) {}
+          int mtime = 0;
+          try {
+            // 用异步版：同步版在主 isolate 上做一次文件 IO（报告第 25 项）。
+            mtime = (await file.lastModified()).millisecondsSinceEpoch;
+          } catch (_) {}
 
-        final item = TrackItem(
-          path: path,
-          filename: filename,
-          title: meta.title,
-          artist: meta.artist,
-          album: meta.album,
-          durationMs: meta.durationMs,
-          format: ext.isNotEmpty ? ext.substring(1) : 'unknown',
-          fileSize: sizeBytes > 0 ? sizeBytes : null,
-          fileMtime: mtime > 0 ? mtime : null,
-          subtitlePath: scanned.subtitleByAudio[path],
-          addedAt: now,
-        );
+          final ext = p.extension(path).toLowerCase();
+          final filename = p.basename(path);
+          final now = DateTime.now().millisecondsSinceEpoch;
 
-        final id = await _trackDao.insert(item);
-        if (id > 0 && meta.pictureBytes != null) {
-          final coverPath = await CoverService.writeEmbedded(
-              id, meta.pictureBytes!, meta.pictureMimetype ?? 'image/jpeg');
-          if (coverPath != null) await _trackDao.setCoverPath(id, coverPath);
+          final item = TrackItem(
+            path: path,
+            filename: filename,
+            title: meta.title,
+            artist: meta.artist,
+            album: meta.album,
+            durationMs: meta.durationMs,
+            format: ext.isNotEmpty ? ext.substring(1) : 'unknown',
+            fileSize: sizeBytes > 0 ? sizeBytes : null,
+            fileMtime: mtime > 0 ? mtime : null,
+            subtitlePath: scanned.subtitleByAudio[path],
+            addedAt: now,
+          );
+
+          final id = await _trackDao.insert(item);
+          if (id > 0 && meta.pictureBytes != null) {
+            final coverPath = await CoverService.writeEmbedded(
+                id, meta.pictureBytes!, meta.pictureMimetype ?? 'image/jpeg');
+            if (coverPath != null) await _trackDao.setCoverPath(id, coverPath);
+          }
+
+          yield ImportProgress(current: i + 1, total: total, currentFile: path);
         }
-
-        yield ImportProgress(current: i + 1, total: total, currentFile: path);
       }
 
       // 自动封面
@@ -195,7 +207,10 @@ class ImportService {
     for (final ap in audioPaths) {
       final t = await _trackDao.getByPath(ap);
       if (t != null && t.coverPath != null && File(t.coverPath!).existsSync()) {
-        await _workDao.setCover(workId, t.coverPath);
+        // 内嵌封面落在 track_ 缓存里，缓存超额清理会把它删掉；
+        // 另存一份 work_ 前缀的副本，作品封面才留得住。
+        final copied = await CoverService.importCover(t.coverPath!, workId);
+        await _workDao.setCover(workId, copied ?? t.coverPath!);
         return;
       }
     }
