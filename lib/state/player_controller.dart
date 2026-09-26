@@ -48,8 +48,15 @@ class PlayerController extends ChangeNotifier {
 
   Timer? _ticker;
 
-  Future<void> init() async {
-    if (_initialized) return;
+  /// 初始化共享 Future：并发调用只初始化一次
+  Future<void>? _initFuture;
+
+  /// 加载代际：快速连续切歌时，过期请求作废，避免多轨同时播放
+  int _loadGen = 0;
+
+  Future<void> init() => _initFuture ??= _doInit();
+
+  Future<void> _doInit() async {
     await _engine.init();
     _initialized = true;
     logInfo('Player', 'SoLoud initialized');
@@ -79,7 +86,11 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _loadAndPlay() async {
+    final gen = ++_loadGen; // 本次加载代际
     await _disposeCurrent();
+    // 释放期间可能已有更新的请求，放弃本次
+    if (gen != _loadGen) return;
+
     if (!hasTrack) {
       _playing = false;
       _position = Duration.zero;
@@ -88,19 +99,35 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     final track = _queue[_index];
+
+    AudioSource? newSource;
     try {
-      _source = await _engine.loadFile(track.path);
-      _duration = _engine.getLength(_source!);
-      _handle = _engine.play(_source!, volume: _volume);
-      _listenEnd();
-      _playing = true;
-      _position = Duration.zero;
-      logInfo('Player', '播放: ${track.path}');
-      onTrackStarted?.call(track);
+      newSource = await _engine.loadFile(track.path);
     } catch (e) {
       logError('Player', '加载失败 ${track.path}: $e');
-      _playing = false;
+      if (gen == _loadGen) {
+        _playing = false;
+        notifyListeners();
+      }
+      return;
     }
+
+    // 加载耗时期间若已有新的点击，丢弃这次已加载的资源，避免多轨同时播放
+    if (gen != _loadGen) {
+      try {
+        await _engine.disposeSource(newSource);
+      } catch (_) {}
+      return;
+    }
+
+    _source = newSource;
+    _duration = _engine.getLength(newSource);
+    _handle = _engine.play(newSource, volume: _volume);
+    _listenEnd();
+    _playing = true;
+    _position = Duration.zero;
+    logInfo('Player', '播放: ${track.path}');
+    onTrackStarted?.call(track);
     notifyListeners();
   }
 
@@ -243,6 +270,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _loadGen++; // 使进行中的加载失效，避免停止后又冒出声音
     await _disposeCurrent();
     _playing = false;
     _position = Duration.zero;
@@ -253,22 +281,24 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _disposeCurrent() async {
+    // 先摘除字段再异步释放，避免并发调用重复释放同一资源
     final h = _handle;
+    final s = _source;
+    final sub = _sub;
+    _handle = null;
+    _source = null;
+    _sub = null;
+    sub?.cancel();
     if (h != null) {
       try {
         await _engine.stop(h);
       } catch (_) {}
-      _handle = null;
     }
-    final s = _source;
     if (s != null) {
       try {
         await _engine.disposeSource(s);
       } catch (_) {}
-      _source = null;
     }
-    _sub?.cancel();
-    _sub = null;
   }
 
   @override
