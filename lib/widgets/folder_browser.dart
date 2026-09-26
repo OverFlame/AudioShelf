@@ -109,7 +109,10 @@ class FolderBrowser extends StatelessWidget {
           if (isWorkLevel && appState.currentWork != null) ...[
             const SizedBox(width: 8),
             OutlinedButton.icon(
-              onPressed: () => _addFolderToWork(context, appState),
+              // 导入进行中再点一次会开第二个导入，这里跟 tag_panel 保持一致都禁用。
+              onPressed: appState.importing
+                  ? null
+                  : () => _addFolderToWork(context, appState),
               icon: const Icon(Icons.create_new_folder_outlined, size: 15),
               label: const Text('添加文件夹到本作品'),
             ),
@@ -147,6 +150,12 @@ class FolderBrowser extends StatelessWidget {
     final path = await pickDirectoryPath(title: '选择要加入「${work.name}」的文件夹');
     if (path == null) return;
     await appState.importDirectoryIntoWork(path, work.id!);
+    // 导入的调用方是按钮回调，没有错误边界：失败原因只能在这里弹出来。
+    final err = appState.importError;
+    if (err != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导入失败：$err')));
+    }
   }
 
   Future<void> _batchAddTags(BuildContext context, AppState appState) async {
@@ -304,7 +313,8 @@ class _FolderTile extends StatelessWidget {
       case 'delete':
         final ok = await confirmDialog(context,
             title: '删除文件夹「${folder.name}」？',
-            content: '仅删除虚拟文件夹记录，磁盘文件保留。');
+            content: '磁盘文件保留，但其中的曲目会从曲库移除'
+                '（别的文件夹仍覆盖到的曲目保留）。');
         if (ok == true) {
           await appState.deleteFolder(folder.id!);
         }

@@ -31,7 +31,13 @@ class DatabaseManager {
     return _db!;
   }
 
+  bool get isOpen => _db != null;
+
   Future<void> init() async {
+    if (_db != null) {
+      logWarn('Database', 'Already initialized, skip duplicate init()');
+      return;
+    }
     logInfo('Database', 'Initializing...');
     if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
       sqfliteFfiInit();
@@ -73,8 +79,14 @@ class DatabaseManager {
   }
 
   Future<void> close() async {
-    logInfo('Database', 'Closing connection');
-    await _db?.close();
+    final db = _db;
+    if (db == null) {
+      logWarn('Database', 'close() called but no open connection');
+      return;
+    }
+    // 先置空再关：并发调用方看到的是「已关闭」，而不是一个正在关闭的句柄。
     _db = null;
+    logInfo('Database', 'Closing connection');
+    await db.close();
   }
 }

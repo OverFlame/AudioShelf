@@ -21,6 +21,7 @@ class SettingsService {
 
   Future<void> init() async {
     final f = await _file();
+    _data = {};
     if (f.existsSync()) {
       try {
         _data = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
@@ -32,10 +33,34 @@ class SettingsService {
     logInfo('Settings', 'Initialized OK');
   }
 
-  Future<void> _save() async {
+  /// 保存串行链。两次保存交错时 writeAsString 的截断与写入会互相穿插，
+  /// 留下半个 JSON；这里让保存排队，写文件本身也做成先写临时文件再改名。
+  Future<void> _saveChain = Future<void>.value();
+
+  Future<void> _save() {
+    final next = _saveChain.then((_) => _writeSettingsFile());
+    // 链尾只保留不会失败的 future：一次写失败不能卡住后面的保存。
+    _saveChain = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<void> _writeSettingsFile() async {
     final f = await _file();
     await f.parent.create(recursive: true);
-    await f.writeAsString(jsonEncode(_data));
+    // 先写临时文件，再改名。读者要么看到完整旧内容，要么看到完整新内容。
+    final tmp = File('${f.path}.tmp');
+    await tmp.writeAsString(jsonEncode(_data), flush: true);
+    if (f.existsSync()) {
+      await f.delete();
+    }
+    await tmp.rename(f.path);
+  }
+
+  /// 清空内存状态并重置保存链，仅供测试。
+  @visibleForTesting
+  void resetForTest() {
+    _data = {};
+    _saveChain = Future<void>.value();
   }
 
   // ── 主题 ──
