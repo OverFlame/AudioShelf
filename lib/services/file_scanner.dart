@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../utils/log_util.dart';
@@ -35,7 +36,24 @@ class ScanResult {
 
 /// 文件系统扫描器 — 递归遍历目录，返回音频 + 匹配的字幕 + 封面图
 class FileScanner {
-  static Future<ScanResult> scanDirectory(String dirPath) async {
+  /// 在调用方 isolate 上递归遍历，扫描结果直接返回。
+  static Future<ScanResult> scanDirectory(String dirPath) => _scan(dirPath);
+
+  /// 在单独 isolate 里递归遍历（报告第 25 项）。
+  ///
+  /// 目录树大时遍历与排序要几十毫秒到几百毫秒，留在界面 isolate 上会掉帧；
+  /// [ScanResult] 只含字符串，可以跨 isolate 传回来。
+  static Future<ScanResult> scanDirectoryOffThread(String dirPath) =>
+      compute(_scan, dirPath, debugLabel: 'audioshelf.scan');
+
+  /// 测试用：判断 [_scan] 是否跑在调用方 isolate 上。
+  ///
+  /// 每个 isolate 有自己的静态变量，扫描跑到别的 isolate 时这里的值不变。
+  @visibleForTesting
+  static bool debugScannedOnCallerIsolate = false;
+
+  static Future<ScanResult> _scan(String dirPath) async {
+    debugScannedOnCallerIsolate = true;
     final audio = <String>[];
     final subtitles = <String>[];
     final covers = <String>[];
@@ -45,16 +63,22 @@ class FileScanner {
       return ScanResult(audioPaths: [], subtitleByAudio: {}, coverFiles: []);
     }
 
-    await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-      final path = entity.path;
-      if (isAudioFile(path)) {
-        audio.add(path);
-      } else if (isSubtitleFile(path)) {
-        subtitles.add(path);
-      } else if (_isCoverImage(path)) {
-        covers.add(path);
+    try {
+      await for (final entity
+          in dir.list(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        final path = entity.path;
+        if (isAudioFile(path)) {
+          audio.add(path);
+        } else if (isSubtitleFile(path)) {
+          subtitles.add(path);
+        } else if (_isCoverImage(path)) {
+          covers.add(path);
+        }
       }
+    } catch (e) {
+      // 子目录读不了（权限、被占用、遍历中消失）时，退回已经扫到的部分。
+      logWarn('Scanner', '遍历中断 "$dirPath": $e');
     }
 
     audio.sort();

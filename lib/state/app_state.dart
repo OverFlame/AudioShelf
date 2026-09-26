@@ -577,7 +577,7 @@ class AppState extends ChangeNotifier {
   Future<Work?> importDirectory(String dirPath) async {
     if (!_beginImport('importDirectory')) return null;
     try {
-      final scan = await FileScanner.scanDirectory(dirPath);
+      final scan = await FileScanner.scanDirectoryOffThread(dirPath);
       if (scan.audioPaths.isEmpty) {
         logWarn('AppState', '目录内无音频，未创建作品: $dirPath');
         return null;
@@ -1148,13 +1148,25 @@ class AppState extends ChangeNotifier {
     _coverCacheLimitMB = mb.clamp(0, 8192);
     await SettingsService.instance.setCoverCacheLimitMB(_coverCacheLimitMB);
     if (_coverCacheLimitMB > 0) {
-      await CoverService.enforceLimit(_coverCacheLimitMB * 1024 * 1024);
+      await CoverService.enforceLimit(_coverCacheLimitMB * 1024 * 1024,
+          keep: _protectedCoverPaths());
     }
     notifyListeners();
   }
 
   Future<void> enforceCoverCacheLimit() async {
     if (_coverCacheLimitMB <= 0) return;
-    await CoverService.enforceLimit(_coverCacheLimitMB * 1024 * 1024);
+    await CoverService.enforceLimit(_coverCacheLimitMB * 1024 * 1024,
+        keep: _protectedCoverPaths());
+  }
+
+  /// 清理封面缓存时不能删的封面：正在播放的曲目、当前浏览作品的封面
+  Set<String> _protectedCoverPaths() {
+    final keep = <String>{};
+    final playing = player.currentTrack?.coverPath;
+    if (playing != null) keep.add(playing);
+    final work = _currentWork?.coverPath;
+    if (work != null) keep.add(work);
+    return keep;
   }
 }

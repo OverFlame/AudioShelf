@@ -23,7 +23,7 @@ class CoverService {
       final ext = _extFromMime(mime);
       final dir = await _coversDir();
       final file = File(p.join(dir, 'track_$trackId.$ext'));
-      await file.writeAsBytes(bytes, flush: true);
+      await _writeAtomic(file, (tmp) => tmp.writeAsBytes(bytes, flush: true));
       return file.path;
     } catch (e) {
       logWarn('Cover', '写入内嵌封面失败: $e');
@@ -43,12 +43,33 @@ class CoverService {
           : '.jpg';
       final dir = await _coversDir();
       final dest = File(p.join(dir, 'work_$workId$safeExt'));
-      await src.copy(dest.path);
+      await _writeAtomic(dest, (tmp) async {
+        await src.copy(tmp.path);
+      });
       logInfo('Cover', '导入封面: $srcPath → ${dest.path}');
       return dest.path;
     } catch (e) {
       logWarn('Cover', '导入封面失败: $e');
       return null;
+    }
+  }
+
+  /// 先写临时文件再改名。
+  ///
+  /// 直接覆盖目标文件时，写一半被读取（或进程结束）会留下半个图片；
+  /// 改名在同一文件系统内是原子的，读者要么看到旧的完整文件、要么看到新的。
+  static Future<void> _writeAtomic(
+      File dest, Future<void> Function(File tmp) writer) async {
+    final tmp = File('${dest.path}.tmp');
+    try {
+      await writer(tmp);
+      if (dest.existsSync()) await dest.delete();
+      await tmp.rename(dest.path);
+    } catch (e) {
+      try {
+        if (tmp.existsSync()) await tmp.delete();
+      } catch (_) {}
+      rethrow;
     }
   }
 
@@ -95,12 +116,17 @@ class CoverService {
   }
 
   /// 超出上限时按最旧优先删除内嵌封面（track_*.jpg）
-  static Future<void> enforceLimit(int maxBytes) async {
+  ///
+  /// [keep] 里的文件不删：正在播放或正在展示的封面被删掉，界面会突然
+  /// 丢掉封面，重新提取要再读一次音频文件。
+  static Future<void> enforceLimit(int maxBytes,
+      {Set<String> keep = const <String>{}}) async {
     if (maxBytes <= 0) return;
     try {
       final dir = await _coversDir();
       final d = Directory(dir);
       if (!d.existsSync()) return;
+      final keepNorm = keep.map(_normPath).toSet();
       final files = <File>[];
       await for (final e in d.list()) {
         if (e is File && p.basename(e.path).startsWith('track_')) {
@@ -112,6 +138,7 @@ class CoverService {
       int total = files.fold(0, (s, f) => s + f.lengthSync());
       for (final f in files) {
         if (total <= maxBytes) break;
+        if (keepNorm.contains(_normPath(f.path))) continue;
         total -= f.lengthSync();
         try {
           await f.delete();
@@ -121,6 +148,9 @@ class CoverService {
       logWarn('Cover', 'enforceLimit 失败: $e');
     }
   }
+
+  /// 统一成绝对路径再比较，调用方传相对路径或不同分隔符也能对上
+  static String _normPath(String path) => p.normalize(File(path).absolute.path);
 
   static String _extFromMime(String mime) {
     final m = mime.toLowerCase();
