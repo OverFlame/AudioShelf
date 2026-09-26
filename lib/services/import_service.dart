@@ -33,7 +33,9 @@ class ImportService {
   final FolderDao _folderDao;
   final TrackDao _trackDao;
 
-  bool _isImporting = false;
+  /// 所有实例共享。实例字段拦不住并发导入：调用方每次都新建实例。
+  /// AppState 才是主守卫，这里兜住直接调用的场景。
+  static bool _isImporting = false;
   bool get isImporting => _isImporting;
 
   ImportService({
@@ -54,23 +56,32 @@ class ImportService {
   }
 
   /// 导入目录到指定作品 [workId]。
+  ///
+  /// [scan] 可由调用方预先扫描并传入，省掉一次目录遍历（AppState 建作品前要先确认
+  /// 目录里有音频）。
   Stream<ImportProgress> importDirectory(String dirPath,
-      {required int workId}) async* {
+      {required int workId, ScanResult? scan}) async* {
     if (_isImporting) return;
     _isImporting = true;
     try {
-      final scan = await FileScanner.scanDirectory(dirPath);
-      if (scan.audioPaths.isEmpty) {
+      final scanned = scan ?? await FileScanner.scanDirectory(dirPath);
+      if (scanned.audioPaths.isEmpty) {
         logInfo('Import', 'importDirectory: 目录内无音频 "$dirPath"');
         return;
       }
 
-      final existing = await _trackDao.existingPaths(scan.audioPaths);
+      final existing = await _trackDao.existingPaths(scanned.audioPaths);
       final newPaths =
-          scan.audioPaths.where((p) => !existing.contains(p)).toList();
+          scanned.audioPaths.where((p) => !existing.contains(p)).toList();
       final total = newPaths.length;
       logInfo('Import',
-          'scanned ${scan.audioPaths.length} total, $total new, ${scan.audioPaths.length - total} dupes');
+          'scanned ${scanned.audioPaths.length} total, $total new, ${scanned.audioPaths.length - total} dupes');
+
+      // 先镜像物理目录树，再写曲目（报告第 18 项）。
+      //
+      // 反过来的话，建树失败时曲目已经落库、却没有任何 folder_paths 覆盖它们：
+      // 曲目搜得到、树里进不去，而且调用方看到的是「导入完成」。
+      await _mirrorFolderTree(dirPath, scanned.audioPaths, workId);
 
       for (int i = 0; i < newPaths.length; i++) {
         final path = newPaths[i];
@@ -100,7 +111,7 @@ class ImportService {
           format: ext.isNotEmpty ? ext.substring(1) : 'unknown',
           fileSize: sizeBytes > 0 ? sizeBytes : null,
           fileMtime: mtime > 0 ? mtime : null,
-          subtitlePath: scan.subtitleByAudio[path],
+          subtitlePath: scanned.subtitleByAudio[path],
           addedAt: now,
         );
 
@@ -114,10 +125,9 @@ class ImportService {
         yield ImportProgress(current: i + 1, total: total, currentFile: path);
       }
 
-      // 镜像物理目录树
-      await _mirrorFolderTree(dirPath, scan.audioPaths, workId);
       // 自动封面
-      await _ensureWorkCover(workId, scan.coverFiles, dirPath, scan.audioPaths);
+      await _ensureWorkCover(
+          workId, scanned.coverFiles, dirPath, scanned.audioPaths);
       logInfo('Import', 'importDirectory done for work=$workId');
     } finally {
       _isImporting = false;
@@ -154,28 +164,14 @@ class ImportService {
     for (final dir in sorted) {
       final parentDir = _normPath(p.dirname(dir));
       final expectedParentId = map[parentDir]?.id;
-
-      var folder = await _folderDao.getByPath(dir);
-      if (folder == null) {
-        final name = p.basename(dir);
-        final displayName = name.isEmpty ? dir : name;
-        folder = await _folderDao.create(displayName,
-            parentId: expectedParentId, workId: workId);
-        await _folderDao.addPath(folder.id!, dir, recursive: false);
-      } else {
-        if (folder.parentId != expectedParentId) {
-          await _folderDao.move(folder.id!, expectedParentId);
-        }
-        if (folder.workId != workId) {
-          await _folderDao.setWork(folder.id!, workId);
-        }
-        folder = VirtualFolder(
-            id: folder.id,
-            name: folder.name,
-            parentId: expectedParentId,
-            workId: workId);
-      }
-      map[dir] = folder;
+      final base = p.basename(dir);
+      // 取或建在一个事务里完成，父级与归属一并对齐（报告第 17 项）。
+      map[dir] = await _folderDao.ensureByPath(
+        dir,
+        name: base.isEmpty ? dir : base,
+        parentId: expectedParentId,
+        workId: workId,
+      );
     }
   }
 

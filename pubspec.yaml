@@ -59,6 +59,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # 测试里替换路径提供者，让 DataDirService 的迁移用例跑在临时目录。
+  path_provider_platform_interface: ^2.1.3
+
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your

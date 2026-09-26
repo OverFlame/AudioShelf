@@ -137,12 +137,28 @@ class FolderDao {
   }
 
   /// 删除文件夹（CASCADE 清理 folder_paths；子文件夹上移为根级）
+  ///
+  /// 两条语句必须同一事务：中间失败会留下「子级已上移、本行还在」的树。
   Future<int> delete(int id) async {
-    await _db.update('folders', {'parent': null},
-        where: 'parent = ?', whereArgs: [id]);
-    final count = await _db.delete('folders', where: 'id = ?', whereArgs: [id]);
-    logInfo('FolderDao', 'Deleted folder id=$id (affected $count row(s))');
-    return count;
+    return _db.transaction((txn) async {
+      await txn.update('folders', {'parent': null},
+          where: 'parent = ?', whereArgs: [id]);
+      final count = await txn.delete('folders', where: 'id = ?', whereArgs: [id]);
+      logInfo('FolderDao', 'Deleted folder id=$id (affected $count row(s))');
+      return count;
+    });
+  }
+
+  /// 一次事务里给多个文件夹改归属，供「整棵子树换作品」使用。
+  Future<void> setWorkMany(Iterable<int> ids, int? workId) async {
+    final list = ids.toList();
+    if (list.isEmpty) return;
+    await _db.transaction((txn) async {
+      for (final id in list) {
+        await txn.update('folders', {'work_id': workId},
+            where: 'id = ?', whereArgs: [id]);
+      }
+    });
   }
 
   /// 收集某文件夹及其所有后代文件夹（BFS）
@@ -177,13 +193,70 @@ class FolderDao {
   }
 
   Future<VirtualFolder?> getByPath(String path) async {
+    // 同一个路径可能挂在多个文件夹上（migrations[4] 之前建的数据）。
+    // 不给顺序时返回哪一行由 SQLite 扫描顺序决定，导入时命中的文件夹会来回跳，
+    // 所以固定取 id 最小的那个。
     final rows = await _db.rawQuery('''
       SELECT f.* FROM folders f
       INNER JOIN folder_paths fp ON f.id = fp.folder_id
       WHERE fp.path = ?
+      ORDER BY f.id
     ''', [path]);
     if (rows.isEmpty) return null;
     return VirtualFolder.fromMap(rows.first);
+  }
+
+  /// 按路径取文件夹；不存在就连同 path 映射一起建。整个过程在一个事务里。
+  ///
+  /// 原来的写法是「先 getByPath、再 create、再 addPath」三条独立语句：并发调用时
+  /// 两边都查不到、都新建，同一个目录于是变成两个文件夹，各挂一条相同的 path。
+  /// 已存在的记录会顺带把 parent / work 对齐到本次期望值。
+  Future<VirtualFolder> ensureByPath(
+    String path, {
+    required String name,
+    int? parentId,
+    int? workId,
+  }) async {
+    return _db.transaction((txn) async {
+      final rows = await txn.rawQuery('''
+        SELECT f.* FROM folders f
+        INNER JOIN folder_paths fp ON f.id = fp.folder_id
+        WHERE fp.path = ?
+        ORDER BY f.id
+      ''', [path]);
+
+      if (rows.isNotEmpty) {
+        final existing = VirtualFolder.fromMap(rows.first);
+        final patch = <String, Object?>{};
+        if (existing.parentId != parentId) patch['parent'] = parentId;
+        if (existing.workId != workId) patch['work_id'] = workId;
+        if (patch.isNotEmpty) {
+          await txn.update('folders', patch,
+              where: 'id = ?', whereArgs: [existing.id]);
+        }
+        return VirtualFolder(
+          id: existing.id,
+          name: existing.name,
+          parentId: parentId,
+          workId: workId,
+        );
+      }
+
+      final id = await txn.insert('folders', {
+        'name': name,
+        'parent': parentId,
+        'work_id': workId,
+      });
+      await txn.insert('folder_paths', {
+        'folder_id': id,
+        'path': path,
+        'recursive': 0,
+      });
+      logInfo('FolderDao',
+          'ensureByPath 新建文件夹 id=$id name="$name" path="$path"');
+      return VirtualFolder(
+          id: id, name: name, parentId: parentId, workId: workId);
+    });
   }
 
   Future<VirtualFolder> insert({
@@ -199,7 +272,7 @@ class FolderDao {
 
   Future<List<FolderPath>> getPaths(int folderId) async {
     final rows = await _db.query('folder_paths',
-        where: 'folder_id = ?', whereArgs: [folderId]);
+        where: 'folder_id = ?', whereArgs: [folderId], orderBy: 'rowid');
     return rows
         .map((r) => FolderPath(
               folderId: r['folder_id'] as int,
